@@ -9,8 +9,13 @@ from blackstart_city.tasks.catalog import TASK_ORDER
 from blackstart_city.training.policy import load_policy
 
 
-def evaluate_policy(policy_name: str, seeds: int = 3, policy_path: str | None = None) -> dict[str, float]:
-    policy = load_policy(policy_name, policy_path)
+def evaluate_policy(
+    policy_name: str,
+    seeds: int = 3,
+    policy_path: str | None = None,
+    base_model_name: str | None = None,
+) -> dict[str, float]:
+    policy = load_policy(policy_name, policy_path, base_model_name=base_model_name)
     scores = {}
     for task_id in TASK_ORDER:
         task_scores = []
@@ -39,8 +44,13 @@ def evaluate_policy(policy_name: str, seeds: int = 3, policy_path: str | None = 
     return scores
 
 
-def evaluate_with_details(policy_name: str, seeds: int = 3, policy_path: str | None = None) -> dict[str, object]:
-    policy = load_policy(policy_name, policy_path)
+def evaluate_with_details(
+    policy_name: str,
+    seeds: int = 3,
+    policy_path: str | None = None,
+    base_model_name: str | None = None,
+) -> dict[str, object]:
+    policy = load_policy(policy_name, policy_path, base_model_name=base_model_name)
     task_results: dict[str, dict[str, float]] = {}
     overall_scores: list[float] = []
     for task_id in TASK_ORDER:
@@ -95,13 +105,19 @@ def evaluate_heuristic(seeds: int = 3) -> dict[str, float]:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate a Blackstart City policy on fixed seeds.")
-    parser.add_argument("--policy", default="heuristic", choices=["heuristic", "greedy", "json"])
+    parser.add_argument("--policy", default="heuristic", choices=["heuristic", "greedy", "json", "model"])
     parser.add_argument("--policy-path", default=None)
+    parser.add_argument("--base-model-name", default=None)
     parser.add_argument("--seeds", type=int, default=3)
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
 
-    result = evaluate_with_details(args.policy, seeds=args.seeds, policy_path=args.policy_path)
+    result = evaluate_with_details(
+        args.policy,
+        seeds=args.seeds,
+        policy_path=args.policy_path,
+        base_model_name=args.base_model_name,
+    )
     if args.pretty:
         print(json.dumps(result, indent=2))
     else:
