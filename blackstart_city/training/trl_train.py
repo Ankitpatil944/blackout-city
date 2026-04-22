@@ -87,10 +87,10 @@ def main() -> None:
             logging_steps=5,
             save_steps=max(10, args.max_steps // 2),
             completion_only_loss=False,
+            dataset_text_field="text",
             report_to=[],
         ),
         peft_config=peft_config,
-        dataset_text_field="text",
     )
     trainer.train()
     trainer.save_model(args.output_dir)
