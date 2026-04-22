@@ -63,7 +63,7 @@ def main() -> None:
     def format_record(example: dict[str, str]) -> dict[str, str]:
         return {"text": _build_messages(example["prompt"], example["completion"])}
 
-    train_dataset = dataset.map(format_record)
+    train_dataset = dataset.map(format_record, remove_columns=dataset.column_names)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     model = AutoModelForCausalLM.from_pretrained(args.model_name, device_map="auto")
@@ -86,10 +86,11 @@ def main() -> None:
             max_steps=args.max_steps,
             logging_steps=5,
             save_steps=max(10, args.max_steps // 2),
+            completion_only_loss=False,
             report_to=[],
         ),
         peft_config=peft_config,
-        formatting_func=lambda batch: batch["text"],
+        dataset_text_field="text",
     )
     trainer.train()
     trainer.save_model(args.output_dir)
