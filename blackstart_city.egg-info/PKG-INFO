@@ -1,0 +1,191 @@
+Metadata-Version: 2.4
+Name: blackstart-city
+Version: 0.1.0
+Summary: OpenEnv benchmark for city-scale cascading blackout recovery
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: openenv-core>=0.2.3
+Requires-Dist: pydantic>=2.8.0
+Requires-Dist: requests>=2.32.0
+Requires-Dist: uvicorn>=0.30.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.0; extra == "dev"
+Provides-Extra: train
+Requires-Dist: datasets>=2.20.0; extra == "train"
+Requires-Dist: transformers>=4.44.0; extra == "train"
+Requires-Dist: trl>=0.10.1; extra == "train"
+
+# Blackstart City
+
+`Blackstart City` is an OpenEnv benchmark for **city-scale cascading blackout recovery**. An AI agent acts as a restoration commander after a blackout: it must restart generation, energize substations, inspect risky lines, restore hospitals and critical services, and avoid a second collapse while the city degrades around it.
+
+## Why This Benchmark Matters
+
+Most agent environments either solve toy tasks or optimize within a single domain. Real critical-infrastructure recovery is harder:
+
+- actions are order-sensitive
+- information is incomplete
+- restoring one part of the system can destabilize another
+- hospitals, telecom, water, and emergency services depend on the same fragile grid
+
+`Blackstart City` tests whether an agent can recover a city safely instead of greedily restoring load and triggering another blackout.
+
+The benchmark currently ships with **9 deterministic seeded scenarios**:
+
+- `3` easy
+- `3` medium
+- `3` hard
+
+## Task Families
+
+| Task ID | Difficulty | What It Tests |
+|---|---|---|
+| `local_blackstart` | Easy | basic blackstart sequencing and restoring one hospital |
+| `island_rejoin` | Medium | inspection, multi-island recovery, and safe synchronization |
+| `city_cascade_recovery` | Hard | city-scale recovery under backup timers and cascading-failure risk |
+
+## Environment Design
+
+The environment uses typed, structured observations and actions.
+
+### Observation includes
+
+- available generation
+- served load
+- reserve margin
+- frequency
+- substations
+- lines
+- critical nodes: hospitals, telecom, water, emergency
+- population zones
+- warnings
+- reward breakdown
+
+### Actions include
+
+- `start_generator`
+- `energize_substation`
+- `inspect_line`
+- `close_line`
+- `open_line`
+- `restore_critical_node`
+- `restore_zone`
+- `shed_zone`
+- `sync_islands`
+- `activate_battery_support`
+- `publish_status`
+
+### Reward Design
+
+The reward is fully deterministic and decomposed into:
+
+- critical-service restoration
+- load restoration
+- stability and safety
+- inspection quality
+- communication quality
+- action penalties
+- catastrophe penalties
+
+Final task scores are clamped to `(0.01, 0.99)`.
+
+## Local Setup
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -e .[dev]
+```
+
+This project is intended to be installed with the current OpenEnv package:
+
+```powershell
+pip install openenv-core
+```
+
+If you install via `pip install -e .[dev]`, the correct OpenEnv dependency is already included through `pyproject.toml`.
+
+## Run Locally
+
+```powershell
+python -m server.app
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8000/web
+```
+
+## Validation
+
+```powershell
+python -m pytest -q
+python inference.py
+openenv validate
+```
+
+## Pitch Assets
+
+Presentation materials are included under [`docs/`](./docs):
+
+- [`docs/pitch_script.md`](./docs/pitch_script.md)
+- [`docs/demo_runbook.md`](./docs/demo_runbook.md)
+- [`docs/hf_mini_blog.md`](./docs/hf_mini_blog.md)
+- [`docs/video_script.md`](./docs/video_script.md)
+
+## Minimal Training Story
+
+The repository includes training scaffolding under [`blackstart_city/training`](./blackstart_city/training):
+
+- `build_dataset.py` generates rollout data from the heuristic baseline
+- `trl_train.py` shows a minimal TRL-style training entrypoint
+- `eval.py` compares baseline and trained policies on fixed seeds
+- [`train_colab.md`](./train_colab.md) describes the intended HF TRL / Colab workflow
+
+This is designed to support the hackathon requirement of showing a minimal training script using HF TRL or a similar lightweight setup.
+
+### Quick Before / After Evaluation
+
+```powershell
+python -m blackstart_city.training.eval --policy greedy --pretty
+python -m blackstart_city.training.eval --policy heuristic --pretty
+python -m blackstart_city.training.trl_train --dry-run
+```
+
+## Repository Layout
+
+```text
+.
+|-- README.md
+|-- openenv.yaml
+|-- pyproject.toml
+|-- Dockerfile
+|-- inference.py
+|-- client.py
+|-- models.py
+|-- blackstart_city/
+|   |-- env.py
+|   |-- models.py
+|   |-- grading.py
+|   |-- baseline.py
+|   |-- tasks/
+|   |-- training/
+|   `-- server/
+|-- server/
+|   |-- app.py
+|   `-- web_ui.py
+`-- tests/
+```
+
+## What Makes This Submission Strong
+
+- real causal system dynamics instead of prompt-only reasoning
+- deterministic seeded scenarios
+- explicit easy / medium / hard progression
+- critical-service dependencies with visible consequences
+- structured OpenEnv-compliant actions and observations
+- reward shaping that is easy to visualize and train against
+- a pitch-grade `/web` surface that makes the city-scale cascade legible in seconds

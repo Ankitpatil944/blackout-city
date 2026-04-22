@@ -1,0 +1,2 @@
+[console_scripts]
+blackstart-city-server = server.app:main

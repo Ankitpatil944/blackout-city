@@ -1,0 +1,10 @@
+.pytest_cache/
+.venv/
+__pycache__/
+*.pyc
+dist/
+build/
+.env
+outputs/
+dataset.jsonl
+artifacts/
