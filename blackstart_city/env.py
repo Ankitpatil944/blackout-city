@@ -21,6 +21,21 @@ from blackstart_city.models import (
 )
 from blackstart_city.tasks.catalog import TASK_ORDER, get_scenario
 
+# Minutes consumed per action type — used for backup battery drain in _passive_dynamics.
+ACTION_DURATION_MINUTES: dict[ActionType, int] = {
+    ActionType.START_GENERATOR: 5,
+    ActionType.ENERGIZE_SUBSTATION: 3,
+    ActionType.INSPECT_LINE: 4,
+    ActionType.CLOSE_LINE: 2,
+    ActionType.OPEN_LINE: 1,
+    ActionType.RESTORE_CRITICAL_NODE: 4,
+    ActionType.RESTORE_ZONE: 4,
+    ActionType.SHED_ZONE: 2,
+    ActionType.SYNC_ISLANDS: 6,
+    ActionType.ACTIVATE_BATTERY_SUPPORT: 3,
+    ActionType.PUBLISH_STATUS: 2,
+}
+
 
 class BlackstartCityEnv:
     def __init__(self, max_steps: int | None = None):
@@ -117,7 +132,7 @@ class BlackstartCityEnv:
         state.action_history.append(action_signature)
         state.last_action_result = result
         self._recompute_state()
-        self._passive_dynamics()
+        self._passive_dynamics(action.action_type)
         catastrophe_penalty = self._maybe_trigger_catastrophe()
         self._recompute_state()
         state.score = compute_final_score(state, scenario)
@@ -135,7 +150,7 @@ class BlackstartCityEnv:
         if shaped <= 0.02 and score_delta <= 0.0 and action.action_type not in {ActionType.INSPECT_LINE, ActionType.PUBLISH_STATUS}:
             action_penalty += 0.03
         reward = shaped + score_delta - action_penalty - catastrophe_penalty
-        state.cumulative_reward = round(min(10.0, state.cumulative_reward + reward), 3)
+        state.cumulative_reward = round(max(-2.0, min(10.0, state.cumulative_reward + reward)), 3)
         state.cumulative_penalty = round(min(2.0, state.cumulative_penalty + action_penalty + catastrophe_penalty), 3)
         state.reward_breakdown = build_reward_breakdown(
             critical_restore_reward=critical_reward,
@@ -149,6 +164,16 @@ class BlackstartCityEnv:
         )
 
         state.done = self._is_resolved() or state.step_count >= state.max_steps or state.catastrophe_triggered
+
+        # --- Terminal reward shaping (#11) ---
+        if state.done:
+            if self._is_resolved():
+                reward += 1.0
+            if state.catastrophe_triggered:
+                reward -= 0.5
+            if state.hospital_failures > 0:
+                reward -= 0.2 * state.hospital_failures
+
         return self._build_observation(round(reward, 2)), round(reward, 2), state.done, self._info()
 
     @property
@@ -167,7 +192,12 @@ class BlackstartCityEnv:
         if not generator.blackstart_capable and not any(unit.online for unit in self._require_state().generators):
             return "Generator cannot start without an energized system reference.", 0.0, 0.0, 0.0, 0.0, 0.0, 0.08
         generator.online = True
-        generator.current_output_mw = generator.capacity_mw
+        if generator.blackstart_capable:
+            generator.current_output_mw = generator.capacity_mw
+            generator.startup_steps_remaining = 0
+        else:
+            generator.current_output_mw = generator.capacity_mw // 2
+            generator.startup_steps_remaining = 1
         bus = self._find_substation(generator.bus)
         if bus is not None:
             bus.energized = True
@@ -307,12 +337,14 @@ class BlackstartCityEnv:
         penalty = 0.0 if current >= previous else 0.03
         return "Published public recovery status.", 0.0, 0.0, 0.0, 0.0, communication_reward, penalty
 
-    def _passive_dynamics(self) -> None:
+    def _passive_dynamics(self, action_type: ActionType | None = None) -> None:
         state = self._require_state()
+        drain_minutes = ACTION_DURATION_MINUTES.get(action_type, 3) if action_type else 3
+
         newly_failed: list[str] = []
         for node in state.critical_nodes:
             if not node.powered and node.backup_minutes_remaining > 0:
-                node.backup_minutes_remaining = max(0, node.backup_minutes_remaining - 3)
+                node.backup_minutes_remaining = max(0, node.backup_minutes_remaining - drain_minutes)
             if (
                 not node.powered
                 and node.backup_minutes_remaining == 0
@@ -330,13 +362,18 @@ class BlackstartCityEnv:
         if not any(node.powered for node in state.critical_nodes if node.type == CriticalNodeType.WATER):
             state.cumulative_penalty += 0.01
 
+        # Generator ramp-up: tick down startup_steps_remaining each step.
         for generator in state.generators:
-            if generator.online and generator.current_output_mw == 0:
+            if generator.online and generator.startup_steps_remaining > 0:
+                generator.startup_steps_remaining -= 1
+                if generator.startup_steps_remaining == 0:
+                    generator.current_output_mw = generator.capacity_mw
+            elif generator.online and generator.current_output_mw == 0:
                 generator.current_output_mw = generator.capacity_mw
 
     def _maybe_trigger_catastrophe(self) -> float:
         state = self._require_state()
-        if state.frequency_hz < 59.0:
+        if state.frequency_hz < 59.1:  # Realistic cascade threshold (was 59.0, too lenient)
             state.catastrophe_triggered = True
             for line in state.lines:
                 line.closed = False
@@ -433,20 +470,60 @@ class BlackstartCityEnv:
         state = self._require_state()
         critical_ok = all(node.powered for node in state.critical_nodes)
         stable = state.frequency_hz >= 59.7 and not state.catastrophe_triggered
-        zone_ok = sum(zone.restored_pct for zone in state.zones) >= 180
+        # Zone check: at least 60% of total zone demand must be restored.
+        total_zone_demand = sum(zone.demand_mw for zone in state.zones)
+        restored_zone_demand = sum(zone.demand_mw * (zone.restored_pct / 100) for zone in state.zones)
+        zone_ok = (restored_zone_demand / total_zone_demand) >= 0.60 if total_zone_demand else True
         communicated = score_status_update(state.published_status, self._require_scenario(), state) >= 0.06
         return critical_ok and stable and zone_ok and communicated
+
+    def _compute_allowed_actions(self) -> list[ActionType]:
+        """Return only the action types that are currently valid given the state."""
+        state = self._require_state()
+        allowed: list[ActionType] = []
+        has_online_gen = any(g.online for g in state.generators)
+        if any(g.blackstart_capable and not g.online for g in state.generators):
+            allowed.append(ActionType.START_GENERATOR)
+        elif has_online_gen and any(not g.online for g in state.generators):
+            allowed.append(ActionType.START_GENERATOR)
+        if any(not s.energized and not s.damaged for s in state.substations):
+            allowed.append(ActionType.ENERGIZE_SUBSTATION)
+        if any(not line.inspected for line in state.lines):
+            allowed.append(ActionType.INSPECT_LINE)
+        if any(not line.closed and not line.tripped for line in state.lines):
+            allowed.append(ActionType.CLOSE_LINE)
+        if any(line.closed for line in state.lines):
+            allowed.append(ActionType.OPEN_LINE)
+        if any(not n.powered for n in state.critical_nodes):
+            allowed.append(ActionType.RESTORE_CRITICAL_NODE)
+        if any(z.restored_pct < 100 for z in state.zones):
+            allowed.append(ActionType.RESTORE_ZONE)
+        if any(z.restored_pct > 0 for z in state.zones):
+            allowed.append(ActionType.SHED_ZONE)
+        if any(line.damaged for line in state.lines):
+            allowed.append(ActionType.SYNC_ISLANDS)
+        if any(not g.online for g in state.generators if not g.blackstart_capable):
+            allowed.append(ActionType.ACTIVATE_BATTERY_SUPPORT)
+        allowed.append(ActionType.PUBLISH_STATUS)
+        return allowed
 
     def _build_observation(self, reward: float) -> BlackstartObservation:
         state = self._require_state()
         warnings = list(self._require_scenario().warnings)
         for node in state.critical_nodes:
-            if not node.powered and node.backup_minutes_remaining <= 15:
-                warnings.append(f"{node.id} backup below 15 minutes.")
+            if not node.powered:
+                if node.backup_minutes_remaining <= 10:
+                    warnings.append(f"{node.id} CRITICAL: backup under 10 minutes!")
+                elif node.backup_minutes_remaining <= 15:
+                    warnings.append(f"{node.id} backup below 15 minutes.")
         if state.frequency_hz < 59.6:
             warnings.append("Grid frequency below safe restoration threshold.")
+        if state.frequency_hz < 59.2:
+            warnings.append("ALERT: Frequency near second-collapse threshold.")
         if any(line.tripped for line in state.lines):
             warnings.append("One or more lines are tripped.")
+        if state.reserve_margin_mw < 6:
+            warnings.append("Reserve margin critically low — risk of overload.")
 
         return BlackstartObservation(
             incident_id=state.incident_id,
@@ -467,7 +544,7 @@ class BlackstartCityEnv:
             critical_nodes=[item.model_copy(deep=True) for item in state.critical_nodes],
             zones=[item.model_copy(deep=True) for item in state.zones],
             warnings=warnings,
-            allowed_actions=list(ActionType),
+            allowed_actions=self._compute_allowed_actions(),
             last_action_result=state.last_action_result,
             last_action_error=state.last_action_error,
             reward_breakdown=state.reward_breakdown.model_copy(deep=True),
@@ -482,6 +559,9 @@ class BlackstartCityEnv:
             "task_id": state.task_id,
             "score": clamp_score(state.score),
             "resolved": self._is_resolved(),
+            "done": state.done,
+            "step_count": state.step_count,
+            "max_steps": state.max_steps,
             "catastrophe_triggered": state.catastrophe_triggered,
             "hospital_failures": state.hospital_failures,
             "failed_critical_nodes": list(state.failed_critical_nodes),

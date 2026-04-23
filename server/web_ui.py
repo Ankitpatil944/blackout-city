@@ -221,6 +221,27 @@ def render_web_ui() -> str:
       .overlay-banner.safe { color: #86efac; border-color: rgba(34,197,94,0.35); }
       .overlay-banner.warn { color: #fde047; border-color: rgba(234,179,8,0.35); }
       .overlay-banner.danger { color: #fca5a5; border-color: rgba(239,68,68,0.35); }
+      .reward-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 0.6rem;
+        margin-top: 0.6rem;
+      }
+      .reward-item {
+        background: rgba(15,23,42,0.45);
+        border: 1px solid rgba(148,163,184,0.12);
+        border-radius: 8px;
+        padding: 0.5rem;
+        text-align: center;
+      }
+      .reward-item .val {
+        display: block;
+        font-weight: 700;
+        font-size: 1rem;
+        margin-top: 0.2rem;
+      }
+      .reward-item.plus .val { color: #86efac; }
+      .reward-item.minus .val { color: #fca5a5; }
       @media (max-width: 980px) {
         .hero, .grid, .stats, .data-grid, .compare-grid {
           grid-template-columns: 1fr;
@@ -375,6 +396,9 @@ def render_web_ui() -> str:
           <div id="overlay-frequency" class="overlay-banner safe">Grid frequency stable.</div>
           <div id="overlay-reserve" class="overlay-banner safe">Reserve margin healthy.</div>
           <div id="overlay-risk" class="overlay-banner safe">No immediate second-collapse risk.</div>
+
+          <h3 style="margin-top:1.2rem;">Reward Decomposition</h3>
+          <div class="reward-grid" id="reward-decomposition"></div>
         </div>
 
         <div class="card" style="padding:0.9rem;">
@@ -740,6 +764,26 @@ def render_web_ui() -> str:
         renderWarnings(observation.warnings);
         updateMap(observation);
         updateOverlays(observation);
+        renderRewardBreakdown(observation.reward_breakdown);
+      }
+
+      function renderRewardBreakdown(breakdown) {
+        const container = document.getElementById('reward-decomposition');
+        const items = [
+          { label: 'Critical Restore', val: breakdown.critical_restore_reward, type: 'plus' },
+          { label: 'Load Restore', val: breakdown.load_restore_reward, type: 'plus' },
+          { label: 'Stability', val: breakdown.stability_reward, type: 'plus' },
+          { label: 'Inspection', val: breakdown.inspection_reward, type: 'plus' },
+          { label: 'Communication', val: breakdown.communication_reward, type: 'plus' },
+          { label: 'Action Penalty', val: breakdown.action_penalty, type: 'minus' },
+          { label: 'Collapse Penalty', val: breakdown.catastrophe_penalty, type: 'minus' }
+        ];
+        container.innerHTML = items.map(item => `
+          <div class="reward-item ${item.type}">
+            <div class="small">${item.label}</div>
+            <span class="val">${item.val > 0 ? '+' : ''}${item.val.toFixed(2)}</span>
+          </div>
+        `).join('');
       }
 
       async function resetScenario() {
@@ -754,7 +798,8 @@ def render_web_ui() -> str:
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        const observation = await response.json();
+        const data = await response.json();
+        const observation = data.observation;
         appendLog(`[RESET] ${observation.task_id} seed=${payload.seed}`);
         renderObservation(observation);
       }
@@ -765,8 +810,9 @@ def render_web_ui() -> str:
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(action)
         });
-        const observation = await response.json();
-        appendLog(`[STEP] ${JSON.stringify(action)} -> reward=${observation.reward.toFixed(2)} score=${observation.reward_breakdown.current_score.toFixed(2)}`);
+        const data = await response.json();
+        const observation = data.observation;
+        appendLog(`[STEP] ${JSON.stringify(action)} -> reward=${data.reward.toFixed(2)} score=${observation.reward_breakdown.current_score.toFixed(2)}`);
         renderObservation(observation);
         return observation;
       }
@@ -780,13 +826,14 @@ def render_web_ui() -> str:
       async function heuristicStep() {
         const response = await fetch('/baseline/step', { method: 'POST' });
         const payload = await response.json();
+        const observation = payload.observation;
         if (payload.action) {
-          appendLog(`[HEURISTIC] ${JSON.stringify(payload.action)} -> score=${payload.observation.reward_breakdown.current_score.toFixed(2)}`);
+          appendLog(`[HEURISTIC] ${JSON.stringify(payload.action)} -> score=${observation.reward_breakdown.current_score.toFixed(2)}`);
         } else {
           appendLog('[HEURISTIC] no further action');
         }
-        renderObservation(payload.observation);
-        return payload.observation;
+        renderObservation(observation);
+        return observation;
       }
 
       async function autoplayHeuristic() {

@@ -101,13 +101,25 @@ Then open:
 http://127.0.0.1:8000/web
 ```
 
-## Validation
-
 ```powershell
 python -m pytest -q
 python inference.py
+python -m blackstart_city.training.validate_submission
 openenv validate
 ```
+
+## Reward Decomposition
+
+The environment uses a multi-objective reward structure designed for stable RL training:
+
+- **Restoration (30%)**: Population-weighted critical service power-up.
+- **Load (22%)**: Percentage of city demand served.
+- **Stability (22%)**: Frequency maintenance (59.7-60.3 Hz) and reserve margin safety.
+- **Inspection (10%)**: Quality and necessity of line inspections.
+- **Efficiency (8%)**: Penalties for excessive steps or idle time.
+- **Communication (8%)**: Quality of status reports published to the dispatch center.
+
+Scores are strictly clamped to `[0.01, 0.99]` to comply with OpenEnv bot evaluation constraints.
 
 ## Pitch Assets
 

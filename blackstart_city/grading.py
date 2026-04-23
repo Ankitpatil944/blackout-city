@@ -45,10 +45,12 @@ def compute_final_score(state: BlackstartState, scenario: Scenario) -> float:
     load_ratio = (restored_zone_demand / total_zone_demand) if total_zone_demand else 0.0
 
     stability = 1.0
+    if state.frequency_hz < 59.7:
+        stability -= 0.15
     if state.frequency_hz < 59.5:
-        stability -= 0.35
+        stability -= 0.20  # approaching cascade threshold
     if state.frequency_hz < 59.2:
-        stability -= 0.25
+        stability -= 0.30  # severe; near second collapse
     stability -= min(0.3, state.cumulative_penalty)
     if state.catastrophe_triggered:
         stability -= 0.45
@@ -60,7 +62,9 @@ def compute_final_score(state: BlackstartState, scenario: Scenario) -> float:
         inspected = sum(1 for line in damaged if line.inspected)
         inspection_ratio = inspected / len(damaged)
 
-    speed_ratio = max(0.0, 1.0 - (state.step_count / state.max_steps))
+    # Step efficiency: finishing early is rewarded.
+    efficiency_ratio = max(0.0, 1.0 - (state.step_count / state.max_steps))
+
     communication = score_status_update(state.published_status, scenario, state) / 0.12
     unresolved_critical_ratio = (
         sum(1 for node in state.critical_nodes if not node.powered) / len(state.critical_nodes)
@@ -69,13 +73,29 @@ def compute_final_score(state: BlackstartState, scenario: Scenario) -> float:
     )
     failure_penalty = min(0.18, 0.03 * len(state.failed_critical_nodes))
 
+    # Hospital speed bonus: reward saving hospitals while backup still has >50% remaining.
+    # This incentivises the agent to triage hospitals first, not last.
+    hospital_speed_bonus = 0.0
+    for node in state.critical_nodes:
+        if node.powered and node.type.value == "hospital":
+            # Find original backup from scenario to compute ratio saved.
+            original = next(
+                (n.backup_minutes_remaining for n in scenario.critical_nodes if n.id == node.id),
+                None,
+            )
+            if original and original > 0:
+                ratio_remaining = node.backup_minutes_remaining / original
+                hospital_speed_bonus += 0.04 * ratio_remaining  # up to +0.04 per hospital
+    hospital_speed_bonus = min(0.08, hospital_speed_bonus)  # cap at 0.08 total
+
     raw = (
-        0.30 * critical_ratio
-        + 0.22 * load_ratio
+        0.28 * critical_ratio
+        + 0.20 * load_ratio
         + 0.22 * stability
         + 0.10 * inspection_ratio
-        + 0.08 * speed_ratio
+        + 0.08 * efficiency_ratio
         + 0.08 * communication
+        + hospital_speed_bonus
     )
     raw -= 0.03 * unresolved_critical_ratio
     raw -= failure_penalty

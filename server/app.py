@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -11,8 +12,45 @@ from blackstart_city.env import BlackstartCityEnv
 from blackstart_city.tasks.catalog import TASK_ORDER, TASK_SPECS
 from server.web_ui import render_web_ui
 
+# Metadata for the OpenEnv bot to discover environment capabilities.
+MANIFEST = {
+    "spec_version": 1,
+    "name": "blackstart_city",
+    "type": "space",
+    "tasks": [
+        {
+            "id": spec.task_id,
+            "difficulty": spec.difficulty.value,
+            "description": spec.description,
+            "max_steps": spec.max_steps,
+        }
+        for spec in TASK_SPECS.values()
+    ],
+    "endpoints": ["/reset", "/step", "/state", "/tasks", "/grader", "/baseline", "/health", "/schema", "/web", "/manifest"]
+}
 
-app = FastAPI(title="Blackstart City")
+
+app = FastAPI(
+    title="Blackstart City",
+    description=(
+        "OpenEnv-compliant benchmark for city-scale blackout recovery. "
+        "An AI agent must restart generation, energize substations, restore hospitals, "
+        "telecom, water, and emergency services without triggering a second collapse."
+    ),
+    version="0.1.0",
+    license_info={"name": "MIT"},
+    contact={"name": "meta-hack-submission"},
+)
+
+# Allow all origins so HF Spaces, Colab bots, and evaluation harnesses can call the API.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 ENV = BlackstartCityEnv()
 LAST_INFO: dict[str, Any] = {}
 HEURISTIC_STATE = {"published": False, "seen_signatures": set()}
@@ -58,13 +96,22 @@ def schema() -> dict[str, Any]:
     }
 
 
+@app.get("/manifest")
+def manifest() -> dict[str, Any]:
+    return MANIFEST
+
+
 @app.post("/reset")
 def reset(payload: ResetRequest):
     global LAST_INFO, HEURISTIC_STATE
     observation = ENV.reset(task_id=payload.task_id, seed=payload.seed)
-    LAST_INFO = {"score": observation.reward_breakdown.current_score, "resolved": False}
+    # Use the detailed info helper from the environment.
+    LAST_INFO = ENV._info()
     HEURISTIC_STATE = {"published": False, "seen_signatures": set()}
-    return observation.model_dump(mode="json")
+    return {
+        "observation": observation.model_dump(mode="json"),
+        "info": LAST_INFO
+    }
 
 
 @app.post("/step")
@@ -73,12 +120,17 @@ def step(payload: dict[str, Any]):
     from blackstart_city.models import BlackstartAction
 
     action = BlackstartAction.model_validate(payload)
-    observation, _, _, info = ENV.step(action)
+    observation, reward, done, info = ENV.step(action)
     LAST_INFO = info
     HEURISTIC_STATE["seen_signatures"].add(_signature(action))
     if action.action_type.value == "publish_status":
         HEURISTIC_STATE["published"] = True
-    return observation.model_dump(mode="json")
+    return {
+        "observation": observation.model_dump(mode="json"),
+        "reward": float(reward),
+        "done": bool(done),
+        "info": info
+    }
 
 
 @app.get("/state")
@@ -88,7 +140,15 @@ def state():
 
 @app.get("/grader")
 def grader() -> dict[str, Any]:
-    return LAST_INFO or {"score": 0.01, "resolved": False}
+    # Returns the score and status from the LAST step executed in this session.
+    # OpenEnv bots call this at the end of an episode.
+    res = LAST_INFO or {"score": 0.01, "resolved": False, "hospital_failures": 0}
+    return {
+        "score": float(res.get("score", 0.01)),
+        "resolved": bool(res.get("resolved", False)),
+        "hospital_failures": int(res.get("hospital_failures", 0)),
+        "catastrophe": bool(res.get("catastrophe_triggered", False))
+    }
 
 
 @app.get("/baseline")
@@ -123,8 +183,13 @@ def baseline_step() -> dict[str, Any]:
     )
     if action is None:
         return {"done": True, "action": None, "observation": observation.model_dump(mode="json")}
+    # Call step() and extract the observation from the wrapped response.
     result = step(action.model_dump(mode="json", exclude_none=True))
-    return {"done": result["done"], "action": action.model_dump(mode="json", exclude_none=True), "observation": result}
+    return {
+        "done": result["done"],
+        "action": action.model_dump(mode="json", exclude_none=True),
+        "observation": result["observation"],  # unwrap from {obs, reward, done, info}
+    }
 
 
 @app.post("/compare")

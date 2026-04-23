@@ -6,5 +6,11 @@ dist/
 build/
 .env
 outputs/
-dataset.jsonl
 artifacts/
+*.egg-info/
+# IDE
+.vscode/
+.idea/
+# OS
+.DS_Store
+Thumbs.db

@@ -27,6 +27,7 @@ endpoints:
   - /health
   - /schema
   - /web
+  - /manifest
 tasks:
   - id: local_blackstart
     difficulty: easy
