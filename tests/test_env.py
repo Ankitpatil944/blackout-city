@@ -92,11 +92,39 @@ def test_scores_clamp_to_required_range():
     assert clamp_score(1.5) == 0.99
 
 
+def test_restoring_noncritical_zone_before_critical_nodes_is_penalized():
+    env = BlackstartCityEnv()
+    env.reset(task_id="local_blackstart", seed=0)
+    env.step(BlackstartAction(action_type=ActionType.START_GENERATOR, target_id="gen_blackstart_north"))
+    env.step(BlackstartAction(action_type=ActionType.ACTIVATE_BATTERY_SUPPORT, target_id="battery_north"))
+    env.step(BlackstartAction(action_type=ActionType.CLOSE_LINE, target_id="line_n_1"))
+    env.step(BlackstartAction(action_type=ActionType.CLOSE_LINE, target_id="line_n_2"))
+    env.step(BlackstartAction(action_type=ActionType.ENERGIZE_SUBSTATION, target_id="sub_north"))
+    env.step(BlackstartAction(action_type=ActionType.ENERGIZE_SUBSTATION, target_id="sub_civic"))
+
+    observation, reward, _, _ = env.step(
+        BlackstartAction(action_type=ActionType.RESTORE_ZONE, target_id="zone_corridor_north", requested_mw=6)
+    )
+    assert reward < 0.17
+    assert "Non-critical load" in observation.last_action_result
+
+
+def test_hospital_failure_counts_once_after_backup_expires():
+    env = BlackstartCityEnv()
+    env.reset(task_id="local_blackstart", seed=0)
+    state = env._require_state()
+    hospital = next(node for node in state.critical_nodes if node.type.value == "hospital")
+    hospital.backup_minutes_remaining = 0
+    env._passive_dynamics()
+    env._passive_dynamics()
+    assert env.state.hospital_failures == 1
+
+
 def test_heuristic_regression_floor():
     scores = evaluate_heuristic(seeds=2)
     assert scores["local_blackstart"] >= 0.65
     assert scores["island_rejoin"] >= 0.70
-    assert scores["city_cascade_recovery"] >= 0.70
+    assert scores["city_cascade_recovery"] >= 0.60
 
 
 def test_compare_endpoint_shows_heuristic_beating_greedy_on_hard_seed():

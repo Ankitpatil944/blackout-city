@@ -62,6 +62,12 @@ def compute_final_score(state: BlackstartState, scenario: Scenario) -> float:
 
     speed_ratio = max(0.0, 1.0 - (state.step_count / state.max_steps))
     communication = score_status_update(state.published_status, scenario, state) / 0.12
+    unresolved_critical_ratio = (
+        sum(1 for node in state.critical_nodes if not node.powered) / len(state.critical_nodes)
+        if state.critical_nodes
+        else 0.0
+    )
+    failure_penalty = min(0.18, 0.03 * len(state.failed_critical_nodes))
 
     raw = (
         0.30 * critical_ratio
@@ -71,6 +77,8 @@ def compute_final_score(state: BlackstartState, scenario: Scenario) -> float:
         + 0.08 * speed_ratio
         + 0.08 * communication
     )
+    raw -= 0.03 * unresolved_critical_ratio
+    raw -= failure_penalty
     return clamp_score(raw)
 
 
@@ -95,4 +103,3 @@ def build_reward_breakdown(
         catastrophe_penalty=round(catastrophe_penalty, 2),
         current_score=clamp_score(current_score),
     )
-

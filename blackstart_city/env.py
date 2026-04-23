@@ -55,6 +55,7 @@ class BlackstartCityEnv:
             reserve_margin_mw=0,
             frequency_hz=self._scenario.initial_frequency_hz,
             unstable_islands=self._count_unstable_islands(),
+            failed_critical_nodes=[],
             reward_breakdown=RewardBreakdown(current_score=0.01),
             last_action_result="Blackout scenario initialized.",
         )
@@ -71,6 +72,8 @@ class BlackstartCityEnv:
             return self._build_observation(0.0), 0.0, True, self._info()
 
         previous_score = state.score
+        action_signature = self._signature(action)
+        previous_signature_count = state.action_history.count(action_signature)
         state.step_count += 1
         state.last_action_error = None
 
@@ -111,7 +114,7 @@ class BlackstartCityEnv:
                 result = f"Unsupported action type: {action.action_type.value}"
                 action_penalty = 0.08
 
-        state.action_history.append(self._signature(action))
+        state.action_history.append(action_signature)
         state.last_action_result = result
         self._recompute_state()
         self._passive_dynamics()
@@ -120,8 +123,18 @@ class BlackstartCityEnv:
         state.score = compute_final_score(state, scenario)
 
         shaped = critical_reward + load_reward + stability_reward + inspection_reward + communication_reward
-        score_delta = max(0.0, state.score - previous_score)
-        reward = max(0.0, shaped + score_delta - action_penalty - catastrophe_penalty)
+        score_delta = state.score - previous_score
+        if previous_signature_count > 0:
+            action_penalty += min(0.08, 0.03 + previous_signature_count * 0.01)
+        if load_reward > 0.0 and any(not node.powered for node in state.critical_nodes):
+            action_penalty += 0.03
+            state.last_action_result += " Non-critical load was restored before all critical services were online."
+        if action.action_type == ActionType.PUBLISH_STATUS and not any(node.powered for node in state.critical_nodes):
+            action_penalty += 0.04
+            state.last_action_result += " Status was published before visible critical-service recovery."
+        if shaped <= 0.02 and score_delta <= 0.0 and action.action_type not in {ActionType.INSPECT_LINE, ActionType.PUBLISH_STATUS}:
+            action_penalty += 0.03
+        reward = shaped + score_delta - action_penalty - catastrophe_penalty
         state.cumulative_reward = round(min(10.0, state.cumulative_reward + reward), 3)
         state.cumulative_penalty = round(min(2.0, state.cumulative_penalty + action_penalty + catastrophe_penalty), 3)
         state.reward_breakdown = build_reward_breakdown(
@@ -296,10 +309,20 @@ class BlackstartCityEnv:
 
     def _passive_dynamics(self) -> None:
         state = self._require_state()
+        newly_failed: list[str] = []
         for node in state.critical_nodes:
             if not node.powered and node.backup_minutes_remaining > 0:
                 node.backup_minutes_remaining = max(0, node.backup_minutes_remaining - 3)
-            if not node.powered and node.backup_minutes_remaining == 0 and node.type == CriticalNodeType.HOSPITAL:
+            if (
+                not node.powered
+                and node.backup_minutes_remaining == 0
+                and node.id not in state.failed_critical_nodes
+            ):
+                state.failed_critical_nodes.append(node.id)
+                newly_failed.append(node.id)
+        for node_id in newly_failed:
+            node = next(item for item in state.critical_nodes if item.id == node_id)
+            if node.type == CriticalNodeType.HOSPITAL:
                 state.hospital_failures += 1
 
         if not any(node.powered for node in state.critical_nodes if node.type == CriticalNodeType.TELECOM):
@@ -461,6 +484,7 @@ class BlackstartCityEnv:
             "resolved": self._is_resolved(),
             "catastrophe_triggered": state.catastrophe_triggered,
             "hospital_failures": state.hospital_failures,
+            "failed_critical_nodes": list(state.failed_critical_nodes),
         }
 
     def _find_generator(self, target_id: str) -> GeneratorState | None:

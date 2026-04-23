@@ -254,6 +254,7 @@ class BlackstartState(OpenEnvState):
     cumulative_penalty: float = 0.0
     catastrophe_triggered: bool = False
     hospital_failures: int = 0
+    failed_critical_nodes: list[str] = Field(default_factory=list)
     last_action_result: Optional[str] = None
     last_action_error: Optional[str] = None
     published_status: Optional[StatusUpdate] = None
