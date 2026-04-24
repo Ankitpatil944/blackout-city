@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from blackstart_city.models import (
+    ActionType,
     CityTaskSpec,
+    Constraint,
+    ConstraintType,
     CriticalNodeState,
     CriticalNodeType,
     DifficultyLevel,
     GeneratorState,
     LineState,
+    NewsEvent,
     Scenario,
     SubstationState,
     ZonePriority,
@@ -93,6 +97,28 @@ SCENARIO_FAMILIES = {
                 {"action_type": "restore_critical_node", "target_id": "hospital_st_anne"},
             ],
             status_keywords=["hospital", "blackstart", "stabilized", "backup"],
+            constraints=[
+                Constraint(
+                    id="c_hospital_first",
+                    text="Restore St. Anne Hospital before any corridor zone load is reconnected.",
+                    constraint_type=ConstraintType.PRIORITY_ORDER,
+                    must_restore_first="hospital_st_anne",
+                    before_restoring="zone_corridor_north",
+                    active=True,
+                ),
+            ],
+            news_events=[
+                NewsEvent(
+                    id="news_backup_warning",
+                    trigger_step=3,
+                    headline="Hospital St. Anne reports backup generator overheating.",
+                    detail="Hospital maintenance reports the backup generator is running hot. Effective backup time may be shorter than estimated.",
+                    impact_level="warning",
+                    reduces_backup_node="hospital_st_anne",
+                    reduces_backup_by=4,
+                    public_trust_delta=-0.04,
+                ),
+            ],
         ),
         Scenario(
             incident_id="BSC-EASY-002",
@@ -147,6 +173,26 @@ SCENARIO_FAMILIES = {
                 {"action_type": "restore_critical_node", "target_id": "clinic_mercy"},
             ],
             status_keywords=["medical", "west district", "restoration"],
+            constraints=[
+                Constraint(
+                    id="c_clinic_first",
+                    text="Restore Mercy Clinic before industrial zone load is reconnected.",
+                    constraint_type=ConstraintType.PRIORITY_ORDER,
+                    must_restore_first="clinic_mercy",
+                    before_restoring="zone_industry_west",
+                    active=True,
+                ),
+            ],
+            news_events=[
+                NewsEvent(
+                    id="news_clinic_surge",
+                    trigger_step=4,
+                    headline="Mercy Clinic reports incoming patient surge from west district.",
+                    detail="Emergency services are routing patients to Mercy Clinic. Restore clinic power immediately to avoid critical care failures.",
+                    impact_level="critical",
+                    public_trust_delta=-0.05,
+                ),
+            ],
         ),
         Scenario(
             incident_id="BSC-EASY-003",
@@ -201,6 +247,28 @@ SCENARIO_FAMILIES = {
                 {"action_type": "restore_critical_node", "target_id": "er_southside"},
             ],
             status_keywords=["southside", "dispatch", "hospital", "backup"],
+            constraints=[
+                Constraint(
+                    id="c_er_first",
+                    text="Restore Southside ER before any residential zone receives load.",
+                    constraint_type=ConstraintType.PRIORITY_ORDER,
+                    must_restore_first="er_southside",
+                    before_restoring="zone_south_res",
+                    active=True,
+                ),
+            ],
+            news_events=[
+                NewsEvent(
+                    id="news_dispatch_outage",
+                    trigger_step=3,
+                    headline="Emergency dispatch radio reports intermittent coverage in south district.",
+                    detail="Telecom dispatch tower backup batteries are draining faster than expected. Prioritize telecom restoration.",
+                    impact_level="warning",
+                    reduces_backup_node="telecom_dispatch_s",
+                    reduces_backup_by=5,
+                    public_trust_delta=-0.03,
+                ),
+            ],
         ),
     ],
     "island_rejoin": [
@@ -269,6 +337,42 @@ SCENARIO_FAMILIES = {
                 {"action_type": "sync_islands", "target_id": "line_tie_1"},
             ],
             status_keywords=["water", "tie-line", "synchronized"],
+            constraints=[
+                Constraint(
+                    id="c_no_tie1_blind",
+                    text="Never close line_tie_1 without inspecting it first — storm damage reports indicate possible structural failure.",
+                    constraint_type=ConstraintType.FORBIDDEN_TARGET,
+                    forbidden_action_type=ActionType.CLOSE_LINE,
+                    forbidden_target_id="line_tie_1",
+                    active=True,
+                ),
+                Constraint(
+                    id="c_water_before_zones",
+                    text="Restore the water treatment plant before any residential zone receives load.",
+                    constraint_type=ConstraintType.PRIORITY_ORDER,
+                    must_restore_first="water_treatment_east",
+                    before_restoring="zone_civic_res",
+                    active=True,
+                ),
+            ],
+            news_events=[
+                NewsEvent(
+                    id="news_tie1_damage",
+                    trigger_step=3,
+                    headline="Field crews report: line_tie_1 support tower leaning dangerously.",
+                    detail="Structural assessment confirms the tie-line tower is compromised. Full inspection required before any reconnection attempt.",
+                    impact_level="warning",
+                    public_trust_delta=-0.04,
+                ),
+                NewsEvent(
+                    id="news_water_pressure",
+                    trigger_step=6,
+                    headline="ALERT: Water pressure below minimum across east district.",
+                    detail="Fire suppression systems are failing without water plant power. Hospitals and emergency services are at elevated risk.",
+                    impact_level="critical",
+                    public_trust_delta=-0.06,
+                ),
+            ],
         ),
         Scenario(
             incident_id="BSC-MED-002",
@@ -318,6 +422,44 @@ SCENARIO_FAMILIES = {
             warnings=["Harbor hospital running on backup.", "Tie corridor integrity unknown."],
             solution_actions=[],
             status_keywords=["harbor", "corridor", "core"],
+            constraints=[
+                Constraint(
+                    id="c_hospital_harbor_first",
+                    text="Restore Harbor General Hospital before reconnecting any corridor zone load.",
+                    constraint_type=ConstraintType.PRIORITY_ORDER,
+                    must_restore_first="hospital_harbor",
+                    before_restoring="zone_harbor_corridor",
+                    active=True,
+                ),
+                Constraint(
+                    id="c_no_harbor_tie_blind",
+                    text="Do not close the harbor tie-line without inspection — underwater cable may be compromised.",
+                    constraint_type=ConstraintType.FORBIDDEN_TARGET,
+                    forbidden_action_type=ActionType.CLOSE_LINE,
+                    forbidden_target_id="line_harbor_tie",
+                    active=True,
+                ),
+            ],
+            news_events=[
+                NewsEvent(
+                    id="news_harbor_flooding",
+                    trigger_step=4,
+                    headline="Harbor district reports localized flooding near substation sub_harbor.",
+                    detail="Flooding may delay crew access to harbor substation. Plan alternative restoration paths if possible.",
+                    impact_level="warning",
+                    public_trust_delta=-0.04,
+                ),
+                NewsEvent(
+                    id="news_harbor_hospital_urgency",
+                    trigger_step=7,
+                    headline="Harbor General ICU running on last battery reserves.",
+                    detail="Hospital administration reports ICU backup will fail within minutes. Immediate power restoration critical.",
+                    impact_level="critical",
+                    reduces_backup_node="hospital_harbor",
+                    reduces_backup_by=5,
+                    public_trust_delta=-0.07,
+                ),
+            ],
         ),
         Scenario(
             incident_id="BSC-MED-003",
@@ -370,6 +512,44 @@ SCENARIO_FAMILIES = {
             warnings=["River tie was stressed during the cascade and must be verified.", "North clinic backup is under 30 minutes."],
             solution_actions=[],
             status_keywords=["north clinic", "river tie", "telecom", "sync"],
+            constraints=[
+                Constraint(
+                    id="c_clinic_north_first",
+                    text="Restore North Clinic before reconnecting any residential zone.",
+                    constraint_type=ConstraintType.PRIORITY_ORDER,
+                    must_restore_first="clinic_north",
+                    before_restoring="zone_north_res",
+                    active=True,
+                ),
+                Constraint(
+                    id="c_no_river_tie_blind",
+                    text="Do not close line_river_tie without inspection — flash flooding may have weakened the river crossing.",
+                    constraint_type=ConstraintType.FORBIDDEN_TARGET,
+                    forbidden_action_type=ActionType.CLOSE_LINE,
+                    forbidden_target_id="line_river_tie",
+                    active=True,
+                ),
+            ],
+            news_events=[
+                NewsEvent(
+                    id="news_river_flooding",
+                    trigger_step=4,
+                    headline="Flash flood alert: river levels rising near line_river_tie crossing.",
+                    detail="River monitoring stations report surging water levels. Do not attempt line closure until field crews confirm structural integrity.",
+                    impact_level="warning",
+                    public_trust_delta=-0.03,
+                ),
+                NewsEvent(
+                    id="news_clinic_north_backup",
+                    trigger_step=8,
+                    headline="North Clinic backup generator fuel running low.",
+                    detail="North Clinic maintenance confirms diesel reserves will be exhausted soon. Grid power restoration is now the only option.",
+                    impact_level="critical",
+                    reduces_backup_node="clinic_north",
+                    reduces_backup_by=6,
+                    public_trust_delta=-0.05,
+                ),
+            ],
         ),
     ],
     "city_cascade_recovery": [
@@ -452,6 +632,84 @@ SCENARIO_FAMILIES = {
             ],
             solution_actions=[],
             status_keywords=["hospital", "telecom", "water", "city stabilization", "second blackout"],
+            constraints=[
+                # ── Forbidden: school-zone crossing must never be energized ──────────
+                Constraint(
+                    id="c_no_east_tie",
+                    text=(
+                        "Never energize line_tie_east — storm debris near Eastside Elementary School "
+                        "makes this crossing a safety exclusion zone. Field safety orders prohibit any action on this line."
+                    ),
+                    constraint_type=ConstraintType.FORBIDDEN_TARGET,
+                    forbidden_action_type=ActionType.CLOSE_LINE,
+                    forbidden_target_id="line_tie_east",
+                    active=True,
+                ),
+                # ── Conditional: industrial zone stays ≤ 10 MW until reserve > 20 MW
+                Constraint(
+                    id="c_industrial_limit",
+                    text=(
+                        "Industrial zone load must remain below 10 MW until the reserve margin exceeds 20 MW. "
+                        "Premature heavy-load restoration risks a second cascade."
+                    ),
+                    constraint_type=ConstraintType.CONDITIONAL_LIMIT,
+                    limit_target_id="zone_industrial",
+                    limit_mw=10,
+                    condition_field="reserve_margin_mw",
+                    condition_threshold=20.0,
+                    active=True,
+                ),
+                # ── Priority order: activated mid-episode by city council news ──────
+                Constraint(
+                    id="c_emergency_before_residential",
+                    text=(
+                        "City council emergency order: emergency operations must be restored "
+                        "before any residential zone receives load."
+                    ),
+                    constraint_type=ConstraintType.PRIORITY_ORDER,
+                    must_restore_first="emergency_ops",
+                    before_restoring="zone_south_res",
+                    active=False,  # activated by news at step 6
+                ),
+            ],
+            news_events=[
+                NewsEvent(
+                    id="news_line_damage_confirmed",
+                    trigger_step=2,
+                    headline="Field report: Structural damage confirmed at line_tie_city crossing.",
+                    detail=(
+                        "Repair crews have confirmed significant structural damage to the line_tie_city "
+                        "support towers. Full inspection is mandatory before any closure attempt."
+                    ),
+                    impact_level="warning",
+                    public_trust_delta=-0.03,
+                ),
+                NewsEvent(
+                    id="news_hospital_generator_failure",
+                    trigger_step=4,
+                    headline="ALERT: Hospital Central internal generator degraded — backup revised to 12 min.",
+                    detail=(
+                        "Hospital Central reports an auxiliary generator fault. "
+                        "Effective backup window is now critically short. Immediate grid restoration required."
+                    ),
+                    impact_level="critical",
+                    reduces_backup_node="hospital_central",
+                    reduces_backup_by=6,
+                    public_trust_delta=-0.06,
+                ),
+                NewsEvent(
+                    id="news_council_emergency_order",
+                    trigger_step=6,
+                    headline="City Council emergency order: emergency ops before residential zones.",
+                    detail=(
+                        "The city council has issued an emergency directive requiring that the Emergency "
+                        "Operations Centre be restored before any residential zone load is reconnected."
+                    ),
+                    impact_level="warning",
+                    activates_constraint_id="c_emergency_before_residential",
+                    public_trust_delta=-0.05,
+                ),
+            ],
         ),
         Scenario(
             incident_id="BSC-HARD-002",

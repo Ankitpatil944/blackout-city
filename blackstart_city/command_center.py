@@ -86,6 +86,8 @@ def build_role_recommendations(state: BlackstartState) -> list[CommandRecommenda
 def build_coordination_messages(state: BlackstartState, command_center: CommandCenterState) -> list[CoordinationMessage]:
     messages: list[CoordinationMessage] = []
     unresolved = command_center.unresolved_services
+
+    # ── Standard coordination messages ────────────────────────────────────────
     if unresolved:
         messages.append(
             CoordinationMessage(
@@ -113,6 +115,82 @@ def build_coordination_messages(state: BlackstartState, command_center: CommandC
                 summary="Crew pressure is high. Sequence repairs and feeder work to avoid splitting scarce field teams.",
             )
         )
+
+    # ── Multi-agent conflict detection ────────────────────────────────────────
+    # Find what each role is proposing
+    recs = {r.role: r for r in command_center.role_recommendations}
+    grid_rec = recs.get(CommandRole.GRID_OPERATOR)
+    emerg_rec = recs.get(CommandRole.EMERGENCY_COORDINATOR)
+    dispatch_rec = recs.get(CommandRole.RESOURCE_DISPATCHER)
+    pio_rec = recs.get(CommandRole.PUBLIC_INFORMATION_OFFICER)
+
+    # Conflict 1: Grid Operator vs Emergency Coordinator (different targets)
+    if (
+        grid_rec and emerg_rec
+        and grid_rec.proposed_action and emerg_rec.proposed_action
+        and grid_rec.proposed_action.action_type != emerg_rec.proposed_action.action_type
+    ):
+        messages.append(
+            CoordinationMessage(
+                role=CommandRole.GRID_OPERATOR,
+                recipient="emergency_coordinator",
+                urgency="critical",
+                is_conflict=True,
+                summary=(
+                    f"CONFLICT: Grid Operator recommends {grid_rec.proposed_action.action_type.value} "
+                    f"on {grid_rec.proposed_action.target_id or 'grid'}, but Emergency Coordinator "
+                    f"wants {emerg_rec.proposed_action.action_type.value} on "
+                    f"{emerg_rec.proposed_action.target_id or 'critical service'}. "
+                    f"Commander must arbitrate."
+                ),
+            )
+        )
+
+    # Conflict 2: Resource Dispatcher wants to shed load, but Emergency wants to restore
+    if (
+        dispatch_rec and emerg_rec
+        and dispatch_rec.proposed_action and emerg_rec.proposed_action
+        and dispatch_rec.proposed_action.action_type == ActionType.SHED_ZONE
+        and emerg_rec.proposed_action.action_type in {ActionType.RESTORE_CRITICAL_NODE, ActionType.ENERGIZE_SUBSTATION}
+    ):
+        messages.append(
+            CoordinationMessage(
+                role=CommandRole.RESOURCE_DISPATCHER,
+                recipient="emergency_coordinator",
+                urgency="high",
+                is_conflict=True,
+                summary=(
+                    f"CONFLICT: Resource Dispatcher wants to shed {dispatch_rec.proposed_action.target_id} "
+                    f"to stabilize frequency, but Emergency Coordinator insists on restoring "
+                    f"{emerg_rec.proposed_action.target_id}. These goals may be incompatible."
+                ),
+            )
+        )
+
+    # Conflict 3: PIO wants to publish now, Grid Operator says focus on restoration
+    if (
+        pio_rec and grid_rec
+        and pio_rec.proposed_action
+        and pio_rec.proposed_action.action_type == ActionType.PUBLISH_STATUS
+        and grid_rec.proposed_action
+        and grid_rec.proposed_action.action_type != ActionType.PUBLISH_STATUS
+        and grid_rec.urgency == "critical"
+    ):
+        messages.append(
+            CoordinationMessage(
+                role=CommandRole.PUBLIC_INFORMATION_OFFICER,
+                recipient="grid_operator",
+                urgency="high",
+                is_conflict=True,
+                summary=(
+                    f"CONFLICT: Public Information Officer urges immediate status publication "
+                    f"(trust at {command_center.public_trust:.0%}), but Grid Operator has a "
+                    f"critical {grid_rec.proposed_action.action_type.value} pending. "
+                    f"Publishing now costs a step that could save a critical service."
+                ),
+            )
+        )
+
     if not messages:
         messages.append(
             CoordinationMessage(
@@ -122,7 +200,7 @@ def build_coordination_messages(state: BlackstartState, command_center: CommandC
                 summary="Coordination is stable. Continue aligned restoration while preserving reserve margin.",
             )
         )
-    return messages[:3]
+    return messages[:5]
 
 
 def refresh_command_center(state: BlackstartState) -> CommandCenterState:
@@ -326,3 +404,179 @@ def _zone_restored_ratio(state: BlackstartState) -> float:
     total = sum(zone.demand_mw for zone in state.zones)
     restored = sum(zone.demand_mw * (zone.restored_pct / 100) for zone in state.zones)
     return (restored / total) if total else 0.0
+
+
+def score_arbitration(state: BlackstartState, action: BlackstartAction) -> float:
+    """Score the agent's action against any active multi-agent conflicts.
+
+    Design principles:
+      - Feasibility is a hard gate (can't reward an impossible action)
+      - Hysteresis: Emergency priority activates at ≤10 min, deactivates at >12 min
+      - Intent credit decays: 1st infeasible-emergency=0.0, 2nd=−0.05, 3rd+=−0.12
+      - Smooth ramp replaces hard cutoffs to prevent boundary oscillation
+      - Per-step cap of ±0.25 prevents reward stacking exploits
+    """
+    cc = state.command_center
+    conflicts = [m for m in cc.coordination_messages if m.is_conflict]
+    if not conflicts:
+        return 0.0
+
+    recs = {r.role: r for r in cc.role_recommendations}
+    grid_rec = recs.get(CommandRole.GRID_OPERATOR)
+    emerg_rec = recs.get(CommandRole.EMERGENCY_COORDINATOR)
+    dispatch_rec = recs.get(CommandRole.RESOURCE_DISPATCHER)
+
+    total_bonus = 0.0
+    conflict_handled = False  # only one main conflict bonus per step
+
+    for conflict in conflicts:
+        # ── Grid Operator vs Emergency Coordinator ────────────────────────
+        if (
+            conflict.role == CommandRole.GRID_OPERATOR
+            and "Emergency Coordinator" in conflict.summary
+            and grid_rec and emerg_rec
+            and grid_rec.proposed_action and emerg_rec.proposed_action
+            and not conflict_handled
+        ):
+            conflict_handled = True
+            urgent_node = _most_urgent_node(state)
+            emerg_action = emerg_rec.proposed_action
+            backup = urgent_node.backup_minutes_remaining if urgent_node else 999
+
+            # ── Feasibility check ────────────────────────────────────────
+            emerg_executable = _is_action_executable(state, emerg_action)
+
+            # ── Hysteresis for Emergency priority ────────────────────────
+            # Activate at ≤10, deactivate only at >12
+            if backup <= 10:
+                state.emergency_priority_active = True
+            elif backup > 12:
+                state.emergency_priority_active = False
+            # else: keep previous state (hysteresis band 10-12)
+
+            # ── Decision logic (mutually exclusive, smooth) ──────────────
+            # Bucket 1: Emergency NOT executable → Grid wins
+            if not emerg_executable:
+                correct_sides = {grid_rec.proposed_action.action_type}
+
+                if action.action_type not in correct_sides:
+                    # Intent credit with decay
+                    streak = state.infeasible_emergency_streak + 1
+                    state.infeasible_emergency_streak = streak
+                    if state.emergency_priority_active and streak == 1:
+                        total_bonus += 0.0    # 1st: understood urgency
+                    elif state.emergency_priority_active and streak == 2:
+                        total_bonus -= 0.05   # 2nd: should adapt
+                    else:
+                        total_bonus -= 0.12   # 3rd+: exploiting
+                else:
+                    state.infeasible_emergency_streak = 0  # reset on correct choice
+                    total_bonus += 0.20
+
+            # Bucket 2: Executable AND Emergency priority active → Emergency wins
+            elif state.emergency_priority_active and emerg_executable:
+                correct_sides = {emerg_action.action_type}
+                state.infeasible_emergency_streak = 0
+
+                if action.action_type in correct_sides:
+                    # Smooth transition: if this JUST became executable,
+                    # give 0.5x bonus to prevent spike
+                    was_just_blocked = state.infeasible_emergency_streak > 0
+                    total_bonus += 0.10 if was_just_blocked else 0.20
+                else:
+                    total_bonus -= 0.12
+
+            # Bucket 3: Executable, backup in [10, 15] — smooth ramp
+            elif urgent_node and 10 < backup <= 15:
+                # Linear blend: at 10 min Emergency fully correct,
+                # at 15 min Grid fully correct, between → both OK
+                correct_sides = {grid_rec.proposed_action.action_type, emerg_action.action_type}
+                state.infeasible_emergency_streak = 0
+
+                if action.action_type in correct_sides:
+                    # Scale bonus: closer to 10 → full bonus, closer to 15 → reduced
+                    urgency_factor = (15 - backup) / 5.0  # 1.0 at 10, 0.0 at 15
+                    total_bonus += 0.10 + 0.10 * urgency_factor
+                else:
+                    total_bonus -= 0.08  # softer penalty in ambiguous zone
+
+            # Bucket 4: No urgency → Grid wins
+            else:
+                correct_sides = {grid_rec.proposed_action.action_type}
+                state.infeasible_emergency_streak = 0
+
+                if action.action_type in correct_sides:
+                    total_bonus += 0.20
+                else:
+                    total_bonus -= 0.12
+
+        # ── Resource Dispatcher (shed) vs Emergency (restore) ─────────────
+        if (
+            conflict.role == CommandRole.RESOURCE_DISPATCHER
+            and "shed" in conflict.summary.lower()
+            and dispatch_rec and emerg_rec
+            and dispatch_rec.proposed_action and emerg_rec.proposed_action
+            and not conflict_handled
+        ):
+            conflict_handled = True
+
+            if state.frequency_hz < 59.4:
+                correct_action_type = ActionType.SHED_ZONE
+            else:
+                urgent_node = _most_urgent_node(state)
+                if urgent_node and urgent_node.backup_minutes_remaining <= 10:
+                    correct_action_type = emerg_rec.proposed_action.action_type
+                else:
+                    correct_action_type = ActionType.SHED_ZONE
+
+            if action.action_type == correct_action_type:
+                total_bonus += 0.15
+            else:
+                total_bonus -= 0.10
+
+        # ── PIO (publish) vs Grid (critical action) ──────────────────────
+        # Only fires when no other conflict was handled this step
+        if (
+            conflict.role == CommandRole.PUBLIC_INFORMATION_OFFICER
+            and "publication" in conflict.summary.lower()
+            and grid_rec and grid_rec.proposed_action
+            and not conflict_handled
+        ):
+            conflict_handled = True
+
+            if cc.public_trust < 0.30:
+                correct_action_type = ActionType.PUBLISH_STATUS
+            else:
+                correct_action_type = grid_rec.proposed_action.action_type
+
+            if action.action_type == correct_action_type:
+                total_bonus += 0.15
+            else:
+                total_bonus -= 0.10
+
+    # Cap total to prevent stacking exploits
+    return round(max(-0.25, min(0.25, total_bonus)), 3)
+
+
+def _is_action_executable(state: BlackstartState, action: BlackstartAction) -> bool:
+    """Check if a proposed action is physically executable in the current state."""
+    if action.action_type == ActionType.RESTORE_CRITICAL_NODE:
+        target_node = next(
+            (n for n in state.critical_nodes if n.id == action.target_id), None,
+        )
+        if target_node:
+            return any(
+                s.id == target_node.feeder_bus and s.energized for s in state.substations
+            )
+    elif action.action_type == ActionType.ENERGIZE_SUBSTATION:
+        target_sub = action.target_id
+        return any(
+            line.closed and (
+                (line.to_bus == target_sub and any(s.id == line.from_bus and s.energized for s in state.substations))
+                or (line.from_bus == target_sub and any(s.id == line.to_bus and s.energized for s in state.substations))
+            )
+            for line in state.lines
+        )
+    return True
+
+

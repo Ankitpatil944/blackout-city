@@ -3,19 +3,22 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
-from blackstart_city.command_center import coordination_status_text, initial_command_center, refresh_command_center
-from blackstart_city.grading import build_reward_breakdown, clamp_score, compute_final_score, score_status_update
+from blackstart_city.command_center import coordination_status_text, initial_command_center, refresh_command_center, score_arbitration
+from blackstart_city.grading import build_reward_breakdown, clamp_score, compute_final_score, compute_rubric_score, score_status_update
 from blackstart_city.models import (
     ActionType,
     AssetHealth,
     BlackstartAction,
     BlackstartObservation,
     BlackstartState,
+    Constraint,
+    ConstraintType,
     CriticalNodeState,
     CriticalNodeType,
     GeneratorState,
     LineState,
     RewardBreakdown,
+    RubricScore,
     Scenario,
     SubstationState,
     ZoneState,
@@ -44,6 +47,15 @@ class BlackstartCityEnv:
         self._state: BlackstartState | None = None
         self._max_steps_override = max_steps
         self._task_counters = {task_id: 0 for task_id in TASK_ORDER}
+        self._failure_history: list[dict] = []
+
+    def inject_failure_context(self, context: dict) -> None:
+        """Store one tier's failure context for the next tier to see."""
+        self._failure_history.append(context)
+
+    def get_failure_context(self) -> list[dict]:
+        """Return accumulated failure contexts from previous tiers."""
+        return list(self._failure_history)
 
     def reset(self, task_id: str | None = None, seed: int | None = None) -> BlackstartObservation:
         selected = task_id or TASK_ORDER[0]
@@ -77,8 +89,12 @@ class BlackstartCityEnv:
         )
         self._recompute_state()
         self._state.command_center = initial_command_center(self._state)
+        self._state.active_constraints = [c.model_copy(deep=True) for c in self._scenario.constraints]
+        self._state.news_feed = []
+        self._state.constraint_violations = 0
         self._state.score = compute_final_score(self._state, self._scenario)
         self._state.reward_breakdown.current_score = self._state.score
+        self._state.rubric = compute_rubric_score(self._state, self._scenario)
         return self._build_observation(0.0)
 
     def step(self, action: BlackstartAction) -> tuple[BlackstartObservation, float, bool, dict[str, Any]]:
@@ -102,6 +118,12 @@ class BlackstartCityEnv:
         communication_reward = 0.0
         action_penalty = 0.0
         catastrophe_penalty = 0.0
+
+        # --- Constraint check: penalise violations before applying the action ---
+        constraint_penalty = self._check_constraints(action)
+        if constraint_penalty > 0.0:
+            action_penalty += constraint_penalty
+            # Short-circuit: still process the action so state advances, but flag it
 
         result = ""
 
@@ -150,7 +172,10 @@ class BlackstartCityEnv:
         )
         state.score = compute_final_score(state, scenario)
 
-        shaped = critical_reward + load_reward + stability_reward + inspection_reward + communication_reward
+        # --- Arbitration reward: score conflict resolution BEFORE refresh ---
+        arbitration_reward = score_arbitration(state, action)
+
+        shaped = critical_reward + load_reward + stability_reward + inspection_reward + communication_reward + arbitration_reward
         score_delta = state.score - previous_score
         if previous_signature_count > 0:
             action_penalty += min(0.08, 0.03 + previous_signature_count * 0.01)
@@ -175,6 +200,7 @@ class BlackstartCityEnv:
             catastrophe_penalty=catastrophe_penalty,
             current_score=state.score,
         )
+        state.reward_breakdown.arbitration_reward = arbitration_reward
 
         state.done = self._is_resolved() or state.step_count >= state.max_steps or state.catastrophe_triggered
 
@@ -186,6 +212,9 @@ class BlackstartCityEnv:
                 reward -= 0.5
             if state.hospital_failures > 0:
                 reward -= 0.2 * state.hospital_failures
+
+        # --- Rubric update every step ---
+        state.rubric = compute_rubric_score(state, scenario)
 
         return self._build_observation(round(reward, 2)), round(reward, 2), state.done, self._info()
 
@@ -352,6 +381,7 @@ class BlackstartCityEnv:
 
     def _passive_dynamics(self, action_type: ActionType | None = None) -> None:
         state = self._require_state()
+        scenario = self._require_scenario()
         drain_minutes = ACTION_DURATION_MINUTES.get(action_type, 3) if action_type else 3
 
         newly_failed: list[str] = []
@@ -383,6 +413,9 @@ class BlackstartCityEnv:
                     generator.current_output_mw = generator.capacity_mw
             elif generator.online and generator.current_output_mw == 0:
                 generator.current_output_mw = generator.capacity_mw
+
+        # --- News feed: reveal events scheduled for this step ---
+        self._reveal_news_events()
 
     def _maybe_trigger_catastrophe(self) -> float:
         state = self._require_state()
@@ -625,11 +658,14 @@ class BlackstartCityEnv:
             last_action_error=state.last_action_error,
             reward_breakdown=state.reward_breakdown.model_copy(deep=True),
             command_center=state.command_center.model_copy(deep=True),
+            active_constraints=[c.model_copy(deep=True) for c in state.active_constraints],
+            news_feed=[e.model_copy(deep=True) for e in state.news_feed],
+            rubric=state.rubric.model_copy(deep=True),
             reward=reward,
             done=state.done,
         )
 
-    def _info(self) -> dict[str, Any]:
+    def _info(self) -> dict:
         state = self._require_state()
         return {
             "incident_id": state.incident_id,
@@ -645,6 +681,9 @@ class BlackstartCityEnv:
             "public_trust": state.command_center.public_trust,
             "coordination_score": state.command_center.coordination_score,
             "coordination_status": coordination_status_text(state.command_center),
+            "constraint_violations": state.constraint_violations,
+            "rubric": state.rubric.model_dump(mode="json"),
+            "news_count": len(state.news_feed),
         }
 
     def _find_generator(self, target_id: str) -> GeneratorState | None:
@@ -689,3 +728,100 @@ class BlackstartCityEnv:
         if self._scenario is None:
             raise RuntimeError("Scenario not initialized.")
         return self._scenario
+
+    # ── Constraint enforcement ────────────────────────────────────────────────────
+
+    def _check_constraints(self, action: BlackstartAction) -> float:
+        """Return an extra penalty if the proposed action violates any active constraint."""
+        state = self._require_state()
+        penalty = 0.0
+
+        for constraint in state.active_constraints:
+            if not constraint.active or constraint.violated:
+                continue
+
+            if constraint.constraint_type == ConstraintType.FORBIDDEN_TARGET:
+                if (
+                    action.action_type == constraint.forbidden_action_type
+                    and action.target_id == constraint.forbidden_target_id
+                ):
+                    constraint.violated = True
+                    state.constraint_violations += 1
+                    msg = f"CONSTRAINT VIOLATION: {constraint.text}"
+                    state.last_action_error = msg
+                    penalty += 0.25
+
+            elif constraint.constraint_type == ConstraintType.CONDITIONAL_LIMIT:
+                if (
+                    action.action_type == ActionType.RESTORE_ZONE
+                    and action.target_id == constraint.limit_target_id
+                    and action.requested_mw is not None
+                    and constraint.limit_mw is not None
+                    and action.requested_mw > constraint.limit_mw
+                ):
+                    # Only a violation when the condition is NOT yet met
+                    condition_met = False
+                    if constraint.condition_field == "reserve_margin_mw":
+                        condition_met = state.reserve_margin_mw >= (constraint.condition_threshold or 0)
+                    if not condition_met:
+                        constraint.violated = True
+                        state.constraint_violations += 1
+                        state.last_action_error = f"CONSTRAINT VIOLATION: {constraint.text}"
+                        penalty += 0.18
+
+            elif constraint.constraint_type == ConstraintType.PRIORITY_ORDER:
+                if (
+                    action.action_type == ActionType.RESTORE_ZONE
+                    and action.target_id == constraint.before_restoring
+                    and constraint.must_restore_first is not None
+                ):
+                    first_node = self._find_critical_node(constraint.must_restore_first)
+                    if first_node is not None and not first_node.powered:
+                        constraint.violated = True
+                        state.constraint_violations += 1
+                        state.last_action_error = f"CONSTRAINT VIOLATION: {constraint.text}"
+                        penalty += 0.15
+
+        return penalty
+
+    # ── Live news feed ─────────────────────────────────────────────────────────
+
+    def _reveal_news_events(self) -> None:
+        """Surface any news event whose trigger_step has been reached."""
+        state = self._require_state()
+        scenario = self._require_scenario()
+
+        for event in scenario.news_events:
+            if event.revealed:
+                continue
+            if state.step_count < event.trigger_step:
+                continue
+
+            event.revealed = True
+            state.news_feed.append(event.model_copy(deep=True))
+
+            # Apply world-state side-effects
+            if event.reveals_damage_on_line:
+                line = self._find_line(event.reveals_damage_on_line)
+                if line is not None and not line.damaged:
+                    line.damaged = True
+                    line.inspected = True  # crews confirmed it; agent knows
+
+            if event.reduces_backup_node and event.reduces_backup_by:
+                node = self._find_critical_node(event.reduces_backup_node)
+                if node is not None and not node.powered:
+                    node.backup_minutes_remaining = max(
+                        0, node.backup_minutes_remaining - event.reduces_backup_by
+                    )
+
+            if event.public_trust_delta:
+                state.command_center.public_trust = round(
+                    min(0.99, max(0.01, state.command_center.public_trust + event.public_trust_delta)),
+                    2,
+                )
+
+            if event.activates_constraint_id:
+                for constraint in state.active_constraints:
+                    if constraint.id == event.activates_constraint_id:
+                        constraint.active = True
+                        break

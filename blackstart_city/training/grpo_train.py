@@ -88,6 +88,108 @@ def action_quality_reward_func(prompts, completions, **kwargs) -> list[float]:
     return rewards
 
 
+def constraint_reward_func(prompts, completions, **kwargs) -> list[float]:
+    """Penalizes actions that violate scenario constraints visible in the observation."""
+    rewards = []
+    for prompt, comp in zip(prompts, completions):
+        try:
+            prompt_text = prompt[0]["content"] if isinstance(prompt, list) else prompt
+            obs_json_str = prompt_text.split("Observation:\n")[-1]
+            obs_data = json.loads(obs_json_str)
+            comp_text = comp[0]["content"] if isinstance(comp, list) else comp
+            action = parse_action_text(comp_text)
+
+            if action is None:
+                rewards.append(0.0)
+                continue
+
+            score = 0.5  # base: assume compliant
+
+            constraints = obs_data.get("active_constraints", [])
+            for c in constraints:
+                if not c.get("active", True) or c.get("violated", False):
+                    continue
+                ct = c.get("constraint_type", "")
+
+                # Forbidden target check
+                if ct == "forbidden_target":
+                    if (action.action_type.value == c.get("forbidden_action_type")
+                            and action.target_id == c.get("forbidden_target_id")):
+                        score -= 1.0
+
+                # Conditional limit check
+                if ct == "conditional_limit":
+                    if (action.action_type.value == "restore_zone"
+                            and action.target_id == c.get("limit_target_id")
+                            and action.requested_mw is not None
+                            and c.get("limit_mw") is not None
+                            and action.requested_mw > c["limit_mw"]):
+                        score -= 0.8
+
+                # Priority order check
+                if ct == "priority_order":
+                    if (action.action_type.value == "restore_zone"
+                            and action.target_id == c.get("before_restoring")):
+                        first_id = c.get("must_restore_first")
+                        nodes = obs_data.get("critical_nodes", [])
+                        first_node = next((n for n in nodes if n.get("id") == first_id), None)
+                        if first_node and not first_node.get("powered"):
+                            score -= 0.7
+
+            # Bonus: responding to news feed
+            news = obs_data.get("news_feed", [])
+            if news and any(n.get("impact_level") == "critical" for n in news):
+                # Reward actions that address critical news (e.g. restoring the mentioned node)
+                for n in news:
+                    if n.get("reduces_backup_node") and action.target_id == n["reduces_backup_node"]:
+                        score += 0.5
+
+            rewards.append(max(-1.0, min(1.0, score)))
+        except Exception:
+            rewards.append(0.0)
+    return rewards
+
+
+def failure_context_reward_func(prompts, completions, **kwargs) -> list[float]:
+    """
+    ToM Reward: Rewards the model for NOT repeating actions that failed in
+    previous tiers (visible in the failure_context).
+    """
+    rewards = []
+    for prompt, comp in zip(prompts, completions):
+        try:
+            prompt_text = prompt[0]["content"] if isinstance(prompt, list) else prompt
+            obs_json_str = prompt_text.split("Observation:\n")[-1]
+            obs_data = json.loads(obs_json_str)
+
+            # Check for failure history
+            failure_ctx = obs_data.get("failure_context", [])
+            if not failure_ctx:
+                rewards.append(0.0)  # No context to learn from
+                continue
+
+            comp_text = comp[0]["content"] if isinstance(comp, list) else comp
+            action = parse_action_text(comp_text)
+            if not action:
+                rewards.append(-0.2)
+                continue
+
+            # Check if this specific action was tried and failed before
+            was_failure = False
+            for fail in failure_ctx:
+                for failed_action in fail.get("failed_actions", []):
+                    if (failed_action.get("action_type") == action.action_type.value and
+                        failed_action.get("target_id") == action.target_id):
+                        was_failure = True
+                        break
+
+            # Positive reward for pivoting away from failure, negative for repeating it
+            rewards.append(-1.0 if was_failure else 0.5)
+        except Exception:
+            rewards.append(0.0)
+    return rewards
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name", default="Qwen/Qwen2.5-3B-Instruct")
@@ -150,8 +252,10 @@ def main():
             format_reward_func,
             alignment_reward_func,
             action_quality_reward_func,
+            constraint_reward_func,
+            failure_context_reward_func,
         ],
-        reward_weights=[0.1, 0.5, 0.4],
+        reward_weights=[0.1, 0.3, 0.2, 0.2, 0.2],
         args=training_args,
         train_dataset=dataset,
     )
@@ -160,21 +264,23 @@ def main():
     model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
 
-    # Three reward curves on one plot — show judges all three signals
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    # Show all 5 reward signals to the judges
+    fig, axes = plt.subplots(1, 5, figsize=(22, 4))
     reward_keys = [
         "rewards/format_reward_func",
         "rewards/alignment_reward_func",
         "rewards/action_quality_reward_func",
+        "rewards/constraint_reward_func",
+        "rewards/failure_context_reward_func",
     ]
-    titles = ["Format Reward", "Alignment Reward", "Quality Reward"]
+    titles = ["Format", "Alignment", "Quality", "Constraint", "Theory-of-Mind"]
     for ax, key, title in zip(axes, reward_keys, titles):
         values = [l[key] for l in trainer.state.log_history if key in l]
         if values:
             ax.plot(values)
             ax.set_title(title)
             ax.set_xlabel("Step")
-            ax.set_ylabel("Mean Reward")
+            ax.set_ylabel("Reward")
     plt.tight_layout()
     plt.savefig(f"{args.output_dir}/reward_curves.png")
     print(f"Reward curves saved to {args.output_dir}/reward_curves.png")

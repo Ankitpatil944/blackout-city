@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from blackstart_city.baseline import choose_greedy_action, choose_heuristic_action, run_policy_rollout
 from blackstart_city.env import BlackstartCityEnv
 from blackstart_city.tasks.catalog import TASK_ORDER, TASK_SPECS
+from blackstart_city.tier_router import tier_router
 from server.web_ui import render_web_ui
 
 # Metadata for the OpenEnv bot to discover environment capabilities.
@@ -50,6 +51,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(tier_router)
 
 ENV = BlackstartCityEnv()
 LAST_INFO: dict[str, Any] = {}
@@ -147,7 +150,16 @@ def grader() -> dict[str, Any]:
         "score": float(res.get("score", 0.01)),
         "resolved": bool(res.get("resolved", False)),
         "hospital_failures": int(res.get("hospital_failures", 0)),
-        "catastrophe": bool(res.get("catastrophe_triggered", False))
+        "catastrophe": bool(res.get("catastrophe_triggered", False)),
+        "constraint_violations": int(res.get("constraint_violations", 0)),
+        "news_events_revealed": int(res.get("news_count", 0)),
+        "rubric": res.get("rubric", {
+            "safety": 0.0,
+            "triage_quality": 0.0,
+            "communication_clarity": 0.0,
+            "resource_efficiency": 0.0,
+            "overall": 0.0,
+        }),
     }
 
 
