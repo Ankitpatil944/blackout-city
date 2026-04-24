@@ -120,13 +120,12 @@ def main():
 
     dataset = load_dataset("json", data_files="dataset.jsonl", split="train")
 
-    def format_for_grpo(example):
+    def generate_prompt(example):
         return {"prompt": [
-            {"role": "system", "content": "You are a city blackout restoration policy. "
-                                          "Return exactly one valid JSON action object and nothing else."},
+            {"role": "system", "content": "You are a Blackstart City grid commander. Output ONLY a valid JSON object matching the environment's action schema. Do not include markdown code blocks, explanations, or any other text. Example: {\"action_type\": \"start_generator\", \"target_id\": \"gen_1\"}"},
             {"role": "user", "content": "Observation:\n" + example["prompt"]}
         ]}
-    dataset = dataset.map(format_for_grpo, remove_columns=dataset.column_names)
+    dataset = dataset.map(generate_prompt, remove_columns=dataset.column_names)
 
     training_args = GRPOConfig(
         output_dir=args.output_dir,
