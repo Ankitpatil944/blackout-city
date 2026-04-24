@@ -103,7 +103,7 @@ def main():
         model_name=args.model_name,
         max_seq_length=2048,
         load_in_4bit=True,
-        fast_inference=True,
+        fast_inference=False,
         max_lora_rank=16,
         gpu_memory_utilization=0.6,
     )
