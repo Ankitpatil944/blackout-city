@@ -27,6 +27,7 @@ def observation_to_prompt(observation) -> str:
             "allowed_actions": [a.value for a in observation.allowed_actions],
             "last_action_result": observation.last_action_result,
             "last_action_error": observation.last_action_error,
+            "command_center": observation.command_center.model_dump(mode="json"),
         },
         separators=(",", ":"),
     )

@@ -26,7 +26,7 @@ MANIFEST = {
         }
         for spec in TASK_SPECS.values()
     ],
-    "endpoints": ["/reset", "/step", "/state", "/tasks", "/grader", "/baseline", "/health", "/schema", "/web", "/manifest"]
+    "endpoints": ["/reset", "/step", "/state", "/tasks", "/grader", "/baseline", "/baseline/next", "/baseline/step", "/command/brief", "/compare", "/health", "/schema", "/web", "/manifest"]
 }
 
 
@@ -173,6 +173,12 @@ def baseline_next() -> dict[str, Any]:
     return {"action": action.model_dump(mode="json", exclude_none=True) if action is not None else None}
 
 
+@app.get("/command/brief")
+def command_brief() -> dict[str, Any]:
+    observation = ENV._build_observation(0.0)  # type: ignore[attr-defined]
+    return observation.command_center.model_dump(mode="json")
+
+
 @app.post("/baseline/step")
 def baseline_step() -> dict[str, Any]:
     observation = ENV._build_observation(0.0)  # type: ignore[attr-defined]
@@ -212,6 +218,9 @@ def compare(payload: CompareRequest) -> dict[str, Any]:
             "frequency_hz": final_observation.frequency_hz,
             "reserve_margin_mw": final_observation.reserve_margin_mw,
             "served_load_mw": final_observation.served_load_mw,
+            "public_trust": final_observation.command_center.public_trust,
+            "coordination_score": final_observation.command_center.coordination_score,
+            "command_phase": final_observation.command_center.command_phase,
             "log": result["log"],
         }
     return results

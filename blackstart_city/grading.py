@@ -66,6 +66,8 @@ def compute_final_score(state: BlackstartState, scenario: Scenario) -> float:
     efficiency_ratio = max(0.0, 1.0 - (state.step_count / state.max_steps))
 
     communication = score_status_update(state.published_status, scenario, state) / 0.12
+    public_trust = state.command_center.public_trust
+    coordination = state.command_center.coordination_score
     unresolved_critical_ratio = (
         sum(1 for node in state.critical_nodes if not node.powered) / len(state.critical_nodes)
         if state.critical_nodes
@@ -95,6 +97,8 @@ def compute_final_score(state: BlackstartState, scenario: Scenario) -> float:
         + 0.10 * inspection_ratio
         + 0.08 * efficiency_ratio
         + 0.08 * communication
+        + 0.04 * public_trust
+        + 0.04 * coordination
         + hospital_speed_bonus
     )
     raw -= 0.03 * unresolved_critical_ratio

@@ -1,6 +1,6 @@
 # Blackstart City
 
-`Blackstart City` is an OpenEnv benchmark for **city-scale cascading blackout recovery**. An AI agent acts as a restoration commander after a blackout: it must restart generation, energize substations, inspect risky lines, restore hospitals and critical services, and avoid a second collapse while the city degrades around it.
+`Blackstart City` is an OpenEnv benchmark for **city-scale cascading blackout recovery**. An AI restoration commander operates inside a multi-role emergency command loop after a blackout: it must restart generation, energize substations, inspect risky lines, restore hospitals and critical services, coordinate scarce field resources, preserve public trust, and avoid a second collapse while the city degrades around it.
 
 ## Why This Benchmark Matters
 
@@ -10,8 +10,17 @@ Most agent environments either solve toy tasks or optimize within a single domai
 - information is incomplete
 - restoring one part of the system can destabilize another
 - hospitals, telecom, water, and emergency services depend on the same fragile grid
+- field crews, backup assets, and public messaging must stay aligned under pressure
 
 `Blackstart City` tests whether an agent can recover a city safely instead of greedily restoring load and triggering another blackout.
+
+## Theme Alignment
+
+This project now spans multiple OpenEnv hackathon themes:
+
+- **Theme #2: Long-Horizon Planning** through multi-step restoration with delayed failure risk
+- **Theme #3.1: World Modeling** through a partially observable professional infrastructure simulation
+- **Theme #1: Multi-Agent Interactions** through the command-center layer: grid operator, emergency coordinator, public information officer, and resource dispatcher recommendations are surfaced every turn
 
 The benchmark currently ships with **9 deterministic seeded scenarios**:
 
@@ -37,6 +46,9 @@ The environment uses typed, structured observations and actions.
 - served load
 - reserve margin
 - frequency
+- command-center state: public trust, coordination score, command phase
+- role recommendations and coordination messages
+- resource pressure: repair crews, battery support, telecom support
 - substations
 - lines
 - critical nodes: hospitals, telecom, water, emergency
@@ -191,3 +203,4 @@ python -m blackstart_city.training.trl_train --dry-run
 - structured OpenEnv-compliant actions and observations
 - reward shaping that is easy to visualize and train against
 - a pitch-grade `/web` surface that makes the city-scale cascade legible in seconds
+- a multi-agent command layer that turns grid recovery into a coordination benchmark rather than a single-role simulator

@@ -13,6 +13,8 @@ def test_reset_returns_valid_observation():
     assert observation.task_id == "local_blackstart"
     assert observation.steps_remaining == 12
     assert observation.critical_nodes
+    assert observation.command_center.role_recommendations
+    assert observation.command_center.resource_state.repair_crews_total >= 1
 
 
 def test_seeded_reset_is_deterministic():
@@ -130,6 +132,27 @@ def test_heuristic_regression_floor():
 def test_compare_endpoint_shows_heuristic_beating_greedy_on_hard_seed():
     result = compare(CompareRequest(task_id="city_cascade_recovery", seed=0))
     assert result["heuristic"]["score"] > result["greedy"]["score"]
+    assert "public_trust" in result["heuristic"]
+    assert "coordination_score" in result["heuristic"]
+
+
+def test_command_center_trust_changes_after_relevant_status_update():
+    env = BlackstartCityEnv()
+    observation = env.reset(task_id="local_blackstart", seed=0)
+    start_trust = observation.command_center.public_trust
+    env.step(BlackstartAction(action_type=ActionType.START_GENERATOR, target_id="gen_blackstart_north"))
+    observation, _, _, _ = env.step(
+        BlackstartAction(
+            action_type=ActionType.PUBLISH_STATUS,
+            status_update=StatusUpdate(
+                summary="Blackstart command is restoring the district and protecting hospital continuity.",
+                critical_services="Hospital and telecom restoration remain the top public safety priority for the district.",
+                next_action="Continue safe feeder recovery while preserving reserve margin and preventing another collapse.",
+                owner="city restoration commander",
+            ),
+        )
+    )
+    assert observation.command_center.public_trust != start_trust
 
 
 def test_each_task_family_has_three_seeded_variants():

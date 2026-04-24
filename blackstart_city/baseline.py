@@ -33,6 +33,7 @@ ACTION_DURATION_MINUTES: dict[ActionType, int] = {
 REPEATABLE_ACTIONS = {
     ActionType.RESTORE_ZONE,
     ActionType.SHED_ZONE,
+    ActionType.PUBLISH_STATUS,
 }
 
 NODE_TYPE_WEIGHT = {
@@ -142,14 +143,14 @@ def choose_heuristic_action(
     if rescue_action is not None:
         return rescue_action
 
-    zone_action = _best_zone_restore_candidate(observation, seen_signatures, target_resolution=True)
-    if zone_action is not None:
-        return zone_action
-
-    if not published_status and all(node.powered for node in observation.critical_nodes):
+    if not published_status and _can_resolve_via_publish(observation):
         action = _status_action(observation)
         if not _is_action_blocked(action, seen_signatures):
             return action
+
+    zone_action = _choose_zone_resolution_action(observation, seen_signatures)
+    if zone_action is not None:
+        return zone_action
 
     zone_action = _best_zone_restore_candidate(observation, seen_signatures, target_resolution=False)
     if zone_action is not None:
@@ -256,19 +257,118 @@ def _best_rescue_plan(
 
 def _critical_urgency_key(node: CriticalNodeState, minutes_to_restore: int) -> tuple[object, ...]:
     backup_remaining = max(0, node.backup_minutes_remaining)
-    slack = backup_remaining - minutes_to_restore
-    failed = backup_remaining == 0
-    doomed = slack < 0
-    hospital_bias = -3 if node.type == CriticalNodeType.HOSPITAL else 0
+    deadline_miss = max(0, minutes_to_restore - backup_remaining)
+    feasible = deadline_miss == 0 and backup_remaining > 0
     return (
-        failed,
-        doomed,
-        slack + hospital_bias,
+        0 if feasible else 1,
+        deadline_miss,
         NODE_TYPE_WEIGHT[node.type],
         backup_remaining,
         -node.population_impact,
         minutes_to_restore,
     )
+
+
+def _can_resolve_via_publish(observation: BlackstartObservation) -> bool:
+    critical_ok = all(node.powered for node in observation.critical_nodes)
+    stable = observation.frequency_hz >= 59.7
+    zone_ok = _zone_mw_needed_for_resolution(observation) <= 0
+    return critical_ok and stable and zone_ok
+
+
+def _choose_zone_resolution_action(
+    observation: BlackstartObservation,
+    seen_signatures: set[str],
+) -> BlackstartAction | None:
+    if not all(node.powered for node in observation.critical_nodes):
+        return None
+
+    needed_zone_mw = _zone_mw_needed_for_resolution(observation)
+    if needed_zone_mw <= 0:
+        return None
+
+    best: tuple[tuple[object, ...], BlackstartAction] | None = None
+    for zone in observation.zones:
+        plan = _best_zone_plan(observation, zone, needed_zone_mw)
+        if plan is None:
+            continue
+        action = plan["next_action"]
+        if _is_action_blocked(action, seen_signatures):
+            continue
+        rank = (
+            0 if plan["restore_mw"] >= needed_zone_mw else 1,
+            abs(needed_zone_mw - plan["restore_mw"]),
+            -plan["restore_mw"],
+            plan["minutes_to_restore"],
+            ZONE_PRIORITY_WEIGHT[zone.priority],
+            zone.restored_pct,
+        )
+        if best is None or rank < best[0]:
+            best = (rank, action)
+    return best[1] if best is not None else None
+
+
+def _best_zone_plan(
+    observation: BlackstartObservation,
+    zone: ZoneState,
+    needed_zone_mw: float,
+) -> dict[str, object] | None:
+    remaining_restore_mw = _zone_restore_remaining_mw(zone)
+    if remaining_restore_mw <= 0:
+        return None
+
+    requested_mw = max(1, min(remaining_restore_mw, max(4, zone.demand_mw // 2), int(needed_zone_mw + 0.9999)))
+    best: tuple[tuple[object, ...], dict[str, object]] | None = None
+
+    for generator in observation.generators:
+        activation_minutes = 0 if generator.online else _generator_action_minutes(generator)
+        projected_generation = observation.available_generation_mw + (0 if generator.online else generator.capacity_mw)
+        projected_reserve = projected_generation - observation.served_load_mw
+        if projected_reserve < requested_mw:
+            continue
+
+        path, path_cost = _shortest_path(observation, generator.bus, zone.feeder_bus)
+        if path is None:
+            continue
+
+        minutes_to_restore = activation_minutes + path_cost
+        if not _is_substation_energized(observation, zone.feeder_bus):
+            minutes_to_restore += ACTION_DURATION_MINUTES[ActionType.ENERGIZE_SUBSTATION]
+        minutes_to_restore += ACTION_DURATION_MINUTES[ActionType.RESTORE_ZONE]
+
+        next_action = _next_path_action(observation, generator, path)
+        if next_action is None and not _is_substation_energized(observation, zone.feeder_bus):
+            next_action = BlackstartAction(
+                action_type=ActionType.ENERGIZE_SUBSTATION,
+                target_id=zone.feeder_bus,
+            )
+        if next_action is None:
+            if observation.reserve_margin_mw < requested_mw:
+                next_action = _best_generation_boost(observation, set())
+            else:
+                next_action = BlackstartAction(
+                    action_type=ActionType.RESTORE_ZONE,
+                    target_id=zone.id,
+                    requested_mw=requested_mw,
+                )
+        if next_action is None:
+            continue
+
+        plan = {
+            "minutes_to_restore": minutes_to_restore,
+            "restore_mw": requested_mw,
+            "next_action": next_action,
+        }
+        rank = (
+            minutes_to_restore,
+            0 if generator.online else 1,
+            path_cost,
+            ZONE_PRIORITY_WEIGHT[zone.priority],
+        )
+        if best is None or rank < best[0]:
+            best = (rank, plan)
+
+    return best[1] if best is not None else None
 
 
 def _best_zone_restore_candidate(
@@ -285,7 +385,7 @@ def _best_zone_restore_candidate(
             continue
         if not _is_substation_energized(observation, zone.feeder_bus):
             continue
-        remaining_mw = _zone_remaining_mw(zone)
+        remaining_mw = _zone_restore_remaining_mw(zone)
         if remaining_mw <= 0:
             continue
         requested_mw = min(remaining_mw, max(4, zone.demand_mw // 2))
@@ -381,17 +481,30 @@ def _status_action(observation: BlackstartObservation) -> BlackstartAction:
     powered_text = ", ".join(powered) if powered else "no critical services yet"
     pending_text = ", ".join(pending[:3]) if pending else "all critical services"
     reserve_text = f"reserve margin {observation.reserve_margin_mw} MW and frequency {observation.frequency_hz:.2f} Hz"
+    sync_text = "synchronized feeder recovery" if any(line.inspected for line in observation.lines) else "blackstart recovery sequencing"
 
     if pending:
-        next_action = f"Continue feeder restoration for {pending_text} while maintaining {reserve_text}."
+        next_action = (
+            f"Continue {sync_text} for {pending_text}, protect backup-limited services, "
+            f"maintain {reserve_text}, and avoid a second blackout."
+        )
     else:
-        next_action = f"Expand corridor load restoration while maintaining {reserve_text} and avoiding a second blackout."
+        next_action = (
+            f"Maintain synchronized city stabilization, expand corridor restoration, preserve backup resilience, "
+            f"and hold {reserve_text} to avoid a second blackout."
+        )
 
     return BlackstartAction(
         action_type=ActionType.PUBLISH_STATUS,
         status_update=StatusUpdate(
-            summary=f"{observation.title} recovery has restored {powered_text} and stabilized the city response.",
-            critical_services=f"Priority remains on hospital, telecom, water, and emergency coordination; pending focus is {pending_text}.",
+            summary=(
+                f"Blackstart city stabilization has restored {powered_text} and is keeping hospital, telecom, water, "
+                f"and emergency recovery synchronized."
+            ),
+            critical_services=(
+                f"Priority remains on hospital, telecom, water, emergency, corridor, and backup-risk coordination; "
+                f"pending focus is {pending_text}."
+            ),
             next_action=next_action,
             owner="city restoration commander",
         ),
@@ -496,6 +609,10 @@ def _zone_restored_mw(zone: ZoneState) -> int:
 
 def _zone_remaining_mw(zone: ZoneState) -> int:
     return max(0, zone.demand_mw - _zone_restored_mw(zone))
+
+
+def _zone_restore_remaining_mw(zone: ZoneState) -> int:
+    return max(0, zone.demand_mw * (100 - zone.restored_pct) // 100)
 
 
 def _zone_mw_needed_for_resolution(observation: BlackstartObservation) -> float:

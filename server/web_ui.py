@@ -255,7 +255,7 @@ def render_web_ui() -> str:
         <div class="badge">OpenEnv</div>
         <div class="badge">Wild Card / Long-Horizon</div>
         <h1>Blackstart City</h1>
-        <p>An AI restoration commander must bring a dark city back to life before hospitals exhaust backup power, telecom towers fail, water pressure collapses, and one unsafe reconnection triggers a second blackout.</p>
+        <p>An AI command team must bring a dark city back to life before hospitals exhaust backup power, telecom towers fail, water pressure collapses, public trust breaks down, and one unsafe reconnection triggers a second blackout.</p>
         <div class="stats">
           <div class="stat"><span class="small">Task Families</span><strong>3</strong></div>
           <div class="stat"><span class="small">Critical Systems</span><strong>4</strong></div>
@@ -269,7 +269,7 @@ def render_web_ui() -> str:
           <li>Hospitals start on backup power and lose minutes every step.</li>
           <li>Telecom outages reduce visibility and destabilize recovery.</li>
           <li>Water plants create city-scale penalties if left dark.</li>
-          <li>Unsafe line closures can trip feeders and restart the blackout.</li>
+          <li>Grid, emergency, public-information, and dispatch roles must stay aligned.</li>
         </ul>
       </div>
     </div>
@@ -340,6 +340,13 @@ def render_web_ui() -> str:
           <li><code>local_blackstart</code>: restore one district hospital and a telecom node before backup expires</li>
           <li><code>island_rejoin</code>: inspect a hidden-damage tie-line and safely reconnect islands</li>
           <li><code>city_cascade_recovery</code>: restore city-scale critical services while avoiding a second collapse</li>
+        </ul>
+        <h3 style="margin-top:1rem;">Command Roles</h3>
+        <ul>
+          <li><code>grid_operator</code>: energizes feeders and keeps the grid stable</li>
+          <li><code>emergency_coordinator</code>: triages hospitals, telecom, water, and emergency load</li>
+          <li><code>public_information_officer</code>: preserves public trust with truthful updates</li>
+          <li><code>resource_dispatcher</code>: allocates scarce repair crews and support units</li>
         </ul>
         <h3 style="margin-top:1rem;">Reward Breakdown</h3>
         <ul>
@@ -414,6 +421,26 @@ def render_web_ui() -> str:
 
     <div class="grid" style="margin-top:1rem;">
       <div class="card">
+        <h2>Command Center</h2>
+        <div class="stats">
+          <div class="stat"><span class="small">Public Trust</span><strong id="metric-trust">-</strong></div>
+          <div class="stat"><span class="small">Coordination</span><strong id="metric-coordination">-</strong></div>
+          <div class="stat"><span class="small">Phase</span><strong id="metric-phase">-</strong></div>
+          <div class="stat"><span class="small">Dispatch Pressure</span><strong id="metric-dispatch">-</strong></div>
+        </div>
+        <div id="resource-list" class="list" style="margin-top:0.9rem;"></div>
+      </div>
+
+      <div class="card">
+        <h2>Role Recommendations</h2>
+        <div id="role-list" class="list"></div>
+        <h3 style="margin-top:1rem;">Coordination Messages</h3>
+        <div id="message-list" class="list"></div>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-top:1rem;">
+      <div class="card">
         <h2>Critical Nodes</h2>
         <div id="critical-list" class="list"></div>
       </div>
@@ -461,6 +488,7 @@ def render_web_ui() -> str:
         <li><code>POST /reset</code> with <code>{ "task_id": ..., "seed": ... }</code></li>
         <li><code>POST /step</code> with a typed <code>BlackstartAction</code></li>
         <li><code>GET /state</code>, <code>/tasks</code>, <code>/grader</code>, <code>/schema</code></li>
+        <li><code>GET /command/brief</code> for the multi-agent command snapshot</li>
         <li><code>GET /baseline/next</code> and <code>POST /baseline/step</code> for live heuristic demos</li>
         <li><code>POST /compare</code> for greedy vs heuristic rollout comparison</li>
       </ul>
@@ -535,6 +563,62 @@ def render_web_ui() -> str:
       function renderWarnings(warnings) {
         const container = document.getElementById('warning-list');
         container.innerHTML = warnings.map(item => `<li>${item}</li>`).join('');
+      }
+
+      function actionSummary(action) {
+        if (!action) return 'hold current coordination posture';
+        const parts = [action.action_type];
+        if (action.target_id) parts.push(action.target_id);
+        if (action.requested_mw !== undefined && action.requested_mw !== null) parts.push(`${action.requested_mw} MW`);
+        return parts.join(' · ');
+      }
+
+      function renderCommandCenter(commandCenter) {
+        setText('metric-trust', `${Math.round(commandCenter.public_trust * 100)}%`);
+        setText('metric-coordination', `${Math.round(commandCenter.coordination_score * 100)}%`);
+        setText('metric-phase', commandCenter.command_phase);
+        setText('metric-dispatch', `${Math.round(commandCenter.resource_state.dispatch_pressure * 100)}%`);
+
+        const resources = [
+          ['Repair Crews', commandCenter.resource_state.repair_crews_available, commandCenter.resource_state.repair_crews_total],
+          ['Mobile Batteries', commandCenter.resource_state.mobile_battery_units_available, commandCenter.resource_state.mobile_battery_units_total],
+          ['Telecom Support', commandCenter.resource_state.telecom_support_units_available, commandCenter.resource_state.telecom_support_units_total],
+        ];
+        const resourceContainer = document.getElementById('resource-list');
+        resourceContainer.innerHTML = resources.map(item => `
+          <div class="item">
+            <div class="item-line">
+              <strong>${item[0]}</strong>
+              <span class="mono">${item[1]} / ${item[2]}</span>
+            </div>
+            <div class="small">Operational availability for the command network.</div>
+          </div>
+        `).join('');
+
+        const roleContainer = document.getElementById('role-list');
+        roleContainer.innerHTML = commandCenter.role_recommendations.map(item => `
+          <div class="item">
+            <div class="item-line">
+              <strong>${item.role.replaceAll('_', ' ')}</strong>
+              <span class="tag ${item.urgency === 'critical' ? 'danger' : item.urgency === 'high' ? 'warn' : 'safe'}">${item.urgency}</span>
+            </div>
+            <div class="small"><strong>${item.objective}</strong></div>
+            <div class="small">${item.rationale}</div>
+            <div class="small" style="margin-top:0.4rem;">Proposed action: <span class="mono">${actionSummary(item.proposed_action)}</span></div>
+          </div>
+        `).join('');
+
+        const messageContainer = document.getElementById('message-list');
+        messageContainer.innerHTML = commandCenter.coordination_messages.map(item => `
+          <div class="item">
+            <div class="item-line">
+              <strong>${item.role.replaceAll('_', ' ')}</strong>
+              <span class="tag ${item.urgency === 'critical' ? 'danger' : item.urgency === 'high' ? 'warn' : 'safe'}">${item.urgency}</span>
+            </div>
+            <div class="small">To ${item.recipient.replaceAll('_', ' ')}</div>
+            <div class="small">${item.summary}</div>
+          </div>
+        `).join('');
       }
 
       function statusColor(powered, severity) {
@@ -759,6 +843,7 @@ def render_web_ui() -> str:
         setText('metric-islands', observation.unstable_islands);
         setText('metric-done', observation.done ? 'yes' : 'no');
         setText('last-result', observation.last_action_result || 'Scenario reset.');
+        renderCommandCenter(observation.command_center);
         renderCriticalNodes(observation.critical_nodes);
         renderAssets(observation);
         renderWarnings(observation.warnings);
@@ -868,7 +953,9 @@ def render_web_ui() -> str:
           steps <strong>${payload.steps}</strong> |
           resolved <strong>${payload.resolved ? 'yes' : 'no'}</strong> |
           catastrophe <strong>${payload.catastrophe_triggered ? 'yes' : 'no'}</strong> |
-          hospital failures <strong>${payload.hospital_failures}</strong>
+          hospital failures <strong>${payload.hospital_failures}</strong> |
+          trust <strong>${Math.round(payload.public_trust * 100)}%</strong> |
+          coordination <strong>${Math.round(payload.coordination_score * 100)}%</strong>
         `;
         log.textContent = payload.log.map(
           item => `[${item.step}] ${item.action.action_type} -> reward=${item.reward.toFixed(2)} score=${item.score.toFixed(2)}`

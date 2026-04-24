@@ -129,6 +129,22 @@ class StatusUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class CommandRole(str, Enum):
+    GRID_OPERATOR = "grid_operator"
+    EMERGENCY_COORDINATOR = "emergency_coordinator"
+    PUBLIC_INFORMATION_OFFICER = "public_information_officer"
+    RESOURCE_DISPATCHER = "resource_dispatcher"
+
+
+class CoordinationMessage(BaseModel):
+    role: CommandRole
+    recipient: str
+    summary: str = Field(..., min_length=8, max_length=220)
+    urgency: str = Field(..., min_length=3, max_length=24)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class RewardBreakdown(BaseModel):
     critical_restore_reward: float = 0.0
     load_restore_reward: float = 0.0
@@ -204,6 +220,41 @@ class BlackstartAction(OpenEnvAction):
         return self
 
 
+class ResourceState(BaseModel):
+    repair_crews_total: int = Field(default=0, ge=0)
+    repair_crews_available: int = Field(default=0, ge=0)
+    mobile_battery_units_total: int = Field(default=0, ge=0)
+    mobile_battery_units_available: int = Field(default=0, ge=0)
+    telecom_support_units_total: int = Field(default=0, ge=0)
+    telecom_support_units_available: int = Field(default=0, ge=0)
+    dispatch_pressure: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CommandRecommendation(BaseModel):
+    role: CommandRole
+    objective: str = Field(..., min_length=8, max_length=120)
+    rationale: str = Field(..., min_length=12, max_length=260)
+    urgency: str = Field(..., min_length=3, max_length=24)
+    proposed_action: Optional[BlackstartAction] = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CommandCenterState(BaseModel):
+    public_trust: float = Field(default=0.5, ge=0.0, le=1.0)
+    coordination_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    command_phase: str = Field(default="blackstart", min_length=4, max_length=64)
+    unresolved_services: list[str] = Field(default_factory=list)
+    resource_state: ResourceState = Field(default_factory=ResourceState)
+    role_recommendations: list[CommandRecommendation] = Field(default_factory=list)
+    coordination_messages: list[CoordinationMessage] = Field(default_factory=list)
+    rl_proposed_action: Optional[BlackstartAction] = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class BlackstartObservation(OpenEnvObservation):
     incident_id: str
     task_id: str
@@ -227,6 +278,7 @@ class BlackstartObservation(OpenEnvObservation):
     last_action_result: Optional[str] = None
     last_action_error: Optional[str] = None
     reward_breakdown: RewardBreakdown
+    command_center: CommandCenterState = Field(default_factory=CommandCenterState)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -261,5 +313,6 @@ class BlackstartState(OpenEnvState):
     action_history: list[str] = Field(default_factory=list)
     score: float = 0.01
     reward_breakdown: RewardBreakdown = Field(default_factory=RewardBreakdown)
+    command_center: CommandCenterState = Field(default_factory=CommandCenterState)
 
     model_config = ConfigDict(extra="forbid")

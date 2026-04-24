@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+from blackstart_city.command_center import coordination_status_text, initial_command_center, refresh_command_center
 from blackstart_city.grading import build_reward_breakdown, clamp_score, compute_final_score, score_status_update
 from blackstart_city.models import (
     ActionType,
@@ -75,6 +76,7 @@ class BlackstartCityEnv:
             last_action_result="Blackout scenario initialized.",
         )
         self._recompute_state()
+        self._state.command_center = initial_command_center(self._state)
         self._state.score = compute_final_score(self._state, self._scenario)
         self._state.reward_breakdown.current_score = self._state.score
         return self._build_observation(0.0)
@@ -87,6 +89,7 @@ class BlackstartCityEnv:
             return self._build_observation(0.0), 0.0, True, self._info()
 
         previous_score = state.score
+        previous_hospital_failures = state.hospital_failures
         action_signature = self._signature(action)
         previous_signature_count = state.action_history.count(action_signature)
         state.step_count += 1
@@ -135,6 +138,16 @@ class BlackstartCityEnv:
         self._passive_dynamics(action.action_type)
         catastrophe_penalty = self._maybe_trigger_catastrophe()
         self._recompute_state()
+        self._update_command_center(
+            action=action,
+            critical_reward=critical_reward,
+            load_reward=load_reward,
+            inspection_reward=inspection_reward,
+            communication_reward=communication_reward,
+            action_penalty=action_penalty,
+            catastrophe_penalty=catastrophe_penalty,
+            previous_hospital_failures=previous_hospital_failures,
+        )
         state.score = compute_final_score(state, scenario)
 
         shaped = critical_reward + load_reward + stability_reward + inspection_reward + communication_reward
@@ -423,6 +436,66 @@ class BlackstartCityEnv:
         state.unstable_islands = self._count_unstable_islands()
         state.score = clamp_score(compute_final_score(state, self._require_scenario()))
 
+    def _update_command_center(
+        self,
+        *,
+        action: BlackstartAction,
+        critical_reward: float,
+        load_reward: float,
+        inspection_reward: float,
+        communication_reward: float,
+        action_penalty: float,
+        catastrophe_penalty: float,
+        previous_hospital_failures: int,
+    ) -> None:
+        state = self._require_state()
+        center = state.command_center
+        trust_delta = 0.0
+        coordination_delta = 0.0
+
+        if critical_reward > 0.0:
+            trust_delta += 0.02
+            coordination_delta += 0.05
+        if inspection_reward > 0.0:
+            coordination_delta += 0.04
+        if communication_reward > 0.0:
+            trust_delta += min(0.08, communication_reward + 0.01)
+            coordination_delta += 0.03
+        if load_reward > 0.0 and any(not node.powered for node in state.critical_nodes):
+            trust_delta -= 0.02
+            coordination_delta -= 0.05
+        if action_penalty >= 0.08:
+            coordination_delta -= 0.03
+        if action.action_type == ActionType.PUBLISH_STATUS and not any(node.powered for node in state.critical_nodes):
+            trust_delta -= 0.05
+            coordination_delta -= 0.04
+        if state.frequency_hz < 59.7:
+            trust_delta -= 0.02
+            coordination_delta -= 0.03
+        if state.frequency_hz < 59.5:
+            trust_delta -= 0.04
+            coordination_delta -= 0.05
+        if state.reserve_margin_mw < 6:
+            coordination_delta -= 0.03
+        if state.hospital_failures > previous_hospital_failures:
+            delta = state.hospital_failures - previous_hospital_failures
+            trust_delta -= 0.12 * delta
+            coordination_delta -= 0.08 * delta
+        if not any(node.powered for node in state.critical_nodes if node.type == CriticalNodeType.TELECOM):
+            trust_delta -= 0.015
+        if not any(node.powered for node in state.critical_nodes if node.type == CriticalNodeType.WATER):
+            trust_delta -= 0.015
+        if catastrophe_penalty > 0.0 or state.catastrophe_triggered:
+            trust_delta -= 0.25
+            coordination_delta -= 0.25
+        if self._all_critical_restored():
+            trust_delta += 0.015
+            coordination_delta += 0.02
+
+        center.public_trust = round(min(0.99, max(0.01, center.public_trust + trust_delta)), 2)
+        center.coordination_score = round(min(0.99, max(0.01, center.coordination_score + coordination_delta)), 2)
+        refresh_command_center(state)
+
     def _has_energized_path(self, target_bus: str) -> bool:
         state = self._require_state()
         sources = {sub.id for sub in state.substations if sub.energized}
@@ -507,6 +580,9 @@ class BlackstartCityEnv:
         allowed.append(ActionType.PUBLISH_STATUS)
         return allowed
 
+    def _all_critical_restored(self) -> bool:
+        return all(node.powered for node in self._require_state().critical_nodes)
+
     def _build_observation(self, reward: float) -> BlackstartObservation:
         state = self._require_state()
         warnings = list(self._require_scenario().warnings)
@@ -548,6 +624,7 @@ class BlackstartCityEnv:
             last_action_result=state.last_action_result,
             last_action_error=state.last_action_error,
             reward_breakdown=state.reward_breakdown.model_copy(deep=True),
+            command_center=state.command_center.model_copy(deep=True),
             reward=reward,
             done=state.done,
         )
@@ -565,6 +642,9 @@ class BlackstartCityEnv:
             "catastrophe_triggered": state.catastrophe_triggered,
             "hospital_failures": state.hospital_failures,
             "failed_critical_nodes": list(state.failed_critical_nodes),
+            "public_trust": state.command_center.public_trust,
+            "coordination_score": state.command_center.coordination_score,
+            "coordination_status": coordination_status_text(state.command_center),
         }
 
     def _find_generator(self, target_id: str) -> GeneratorState | None:
