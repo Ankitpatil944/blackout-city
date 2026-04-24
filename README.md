@@ -24,19 +24,29 @@ Instead of a single monolithic script, the environment explicitly surfaces recom
 
 ```mermaid
 graph TD
-    A[Environment State] --> B{Command Center}
+    subgraph Env [OpenEnv Simulation]
+        O[Observation State JSON]
+    end
+
+    subgraph Command Center [Multi-Agent Command Center Layer]
+        O -->|Grid Stats and Frequencies| GO[Grid Operator]
+        O -->|Hospital Backup Timers| EC[Emergency Coordinator]
+        O -->|Damage and Crew Status| RD[Resource Dispatcher]
+        O -->|Trust and Panic Levels| PIO[Public Info Officer]
+        
+        GO -->|Proposes Action| R((Role Recommendations))
+        EC -->|Proposes Action| R
+        RD -->|Proposes Action| R
+        PIO -->|Proposes Action| R
+    end
+
+    subgraph AI [RL Policy]
+        O --> M[Qwen 2.5 3B Model]
+        R -.->|Strategic Context Injection| M
+        M -->|Final JSON Action| A[BlackstartAction]
+    end
     
-    B -->|Physics and Feeders| C[Grid Operator]
-    B -->|Human Impact| D[Emergency Coordinator]
-    B -->|Logistics| E[Resource Dispatcher]
-    B -->|Trust and Messaging| F[Public Info Officer]
-    
-    C --> G
-    D --> G
-    E --> G
-    F --> G
-    
-    G((Aggregated Strategy)) -->|Agent Decision| A
+    A -->|env.step| O
 ```
 
 ---
@@ -46,16 +56,27 @@ graph TD
 We moved past simple supervised fine-tuning and implemented **Group Relative Policy Optimization (GRPO)** using Unsloth and Hugging Face `TRL`. This removes the need for a VRAM-heavy Critic model and allows our Qwen-based policy to learn rapidly on a single GPU.
 
 ```mermaid
-flowchart LR
-    A[Observation] --> B(Qwen 2.5 Instruct)
-    B -->|Generates 4 Actions| C{Reward Engine}
-    
-    C -->|Check Format| D[Format Reward]
-    C -->|Check Tactics| E[Quality Reward]
-    C -->|Check Alignment| F[Alignment Reward]
-    
-    D & E & F --> G[Group Advantage Calculation]
-    G -->|Weight Update| B
+flowchart TD
+    subgraph Generation [Rollout Phase]
+        S[Dataset State JSON] --> LLM[Qwen 2.5 3B LoRA]
+        LLM -->|Generate 4 Candidates| C1[Action Candidate 1-4]
+    end
+
+    subgraph Evaluation [Reward Engine Calculation]
+        C1 --> R1[Format Reward: Valid JSON Schema]
+        C1 --> R2[Alignment Reward: Matches Multi-Agent Consensus]
+        C1 --> R3[Quality Reward: Tactical Proxy Logic]
+        
+        R3 -.->|Proxy Logic| T1[Shed load if freq < 59.5Hz]
+        R3 -.->|Proxy Logic| T2[Rescue hospitals < 15m backup]
+        R3 -.->|Proxy Logic| T3[Penalize greedy zone restoration]
+    end
+
+    subgraph Optimization [PPO / GRPO Update]
+        R1 and R2 and R3 --> SUM[Sum Rewards per Action]
+        SUM --> ADV[Compute Group Relative Advantage]
+        ADV -->|Policy Gradient Update| LLM
+    end
 ```
 
 ### GRPO Training Evidence
