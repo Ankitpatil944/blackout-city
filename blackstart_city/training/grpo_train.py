@@ -24,7 +24,12 @@ def format_reward_func(completions, **kwargs) -> list[float]:
 
 
 def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
-    """Rewards alignment with command center agent recommendations"""
+    """
+    1.0 for matching action type AND target_id
+    0.3 for matching action type only
+    0.0 for no match
+    Fuzzy matching prevents permanent zero std.
+    """
     rewards = []
     for prompt, comp in zip(prompts, completions):
         try:
@@ -38,10 +43,15 @@ def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
                 recs = obs.get("command_center", {}).get("role_recommendations", [])
                 for rec in recs:
                     rec_action = rec.get("proposed_action")
-                    if rec_action and rec_action.get("action_type") == action.action_type.value:
+                    if not rec_action:
+                        continue
+                    if rec_action.get("action_type") == action.action_type.value:
                         if rec_action.get("target_id") == action.target_id:
                             reward = 1.0
                             break
+                        else:
+                            # Partial credit — right action type, wrong target
+                            reward = max(reward, 0.3)
             rewards.append(reward)
         except Exception:
             rewards.append(0.0)
@@ -49,7 +59,11 @@ def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
 
 
 def action_quality_reward_func(prompts, completions, **kwargs) -> list[float]:
-    """Graded reward from observation state — no env.step(), no temporal mismatch."""
+    """
+    Graded reward from observation state.
+    Base score 0.1 for any valid action ensures nonzero variance.
+    No env.step() — no temporal mismatch.
+    """
     rewards = []
     for prompt, comp in zip(prompts, completions):
         try:
@@ -63,26 +77,48 @@ def action_quality_reward_func(prompts, completions, **kwargs) -> list[float]:
                 rewards.append(-0.5)
                 continue
 
-            score = 0.0
+            # Base score for any valid action — ensures variance exists
+            score = 0.1
+
             critical_nodes = obs_data.get("critical_nodes", [])
             generators = obs_data.get("generators", [])
             freq = obs_data.get("frequency_hz", 60.0)
+            reserve = obs_data.get("reserve_margin_mw", 0)
             unpowered_critical = [n for n in critical_nodes if not n.get("powered")]
+            powered_critical = [n for n in critical_nodes if n.get("powered")]
 
+            # Reward rescuing critical nodes with low backup
             for node in critical_nodes:
                 if not node.get("powered") and action.target_id == node.get("id"):
                     backup = node.get("backup_minutes_remaining", 999)
                     score += 1.0 if backup < 15 else 0.5 if backup < 30 else 0.2
 
+            # Reward starting generator when none online
             online_count = sum(1 for g in generators if g.get("online"))
             if online_count == 0 and action.action_type.value == "start_generator":
                 score += 1.0
 
+            # Reward any generation boost when reserve is low
+            if reserve < 10 and action.action_type.value in (
+                "start_generator", "activate_battery_support"
+            ):
+                score += 0.5
+
+            # Reward shedding load when frequency is critical
             if freq < 59.5 and action.action_type.value == "shed_zone":
                 score += 0.8
 
+            # Reward inspecting lines — always useful early game
+            if action.action_type.value == "inspect_line":
+                score += 0.2
+
+            # Penalize restoring zones before critical nodes are powered
             if unpowered_critical and action.action_type.value == "restore_zone":
                 score -= 0.5
+
+            # Penalize publishing status before any critical node is powered
+            if not powered_critical and action.action_type.value == "publish_status":
+                score -= 0.3
 
             rewards.append(max(-1.0, min(1.0, score)))
         except Exception:
@@ -122,9 +158,15 @@ def main():
 
     def generate_prompt(example):
         return {"prompt": [
-            {"role": "system", "content": "You are a Blackstart City grid commander. Output ONLY a valid JSON object matching the environment's action schema. Do not include markdown code blocks, explanations, or any other text. Example: {\"action_type\": \"start_generator\", \"target_id\": \"gen_1\"}"},
+            {"role": "system", "content": (
+                "You are a Blackstart City grid commander. "
+                "Output ONLY a valid JSON object matching the environment's action schema. "
+                "Do not include markdown code blocks, explanations, or any other text. "
+                "Example: {\"action_type\": \"start_generator\", \"target_id\": \"gen_1\"}"
+            )},
             {"role": "user", "content": "Observation:\n" + example["prompt"]}
         ]}
+
     dataset = dataset.map(generate_prompt, remove_columns=dataset.column_names)
 
     training_args = GRPOConfig(
@@ -152,7 +194,7 @@ def main():
             alignment_reward_func,
             action_quality_reward_func,
         ],
-        reward_weights=[0.1, 0.5, 0.4],
+        reward_weights=[0.0, 0.5, 0.5],  # format learned, dropped to 0
         args=training_args,
         train_dataset=dataset,
     )
@@ -161,7 +203,6 @@ def main():
     model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
 
-    # Three reward curves on one plot — show judges all three signals
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     reward_keys_substrings = [
         "format_reward_func",
@@ -169,17 +210,16 @@ def main():
         "action_quality_reward_func",
     ]
     titles = ["Format Reward", "Alignment Reward", "Quality Reward"]
-    
+
     for ax, sub, title in zip(axes, reward_keys_substrings, titles):
-        # Find the actual key used by GRPOTrainer (it varies by TRL version)
         actual_key = None
         for log in trainer.state.log_history:
             for k in log.keys():
                 if sub in k:
                     actual_key = k
                     break
-            if actual_key: break
-            
+            if actual_key:
+                break
         if actual_key:
             values = [l[actual_key] for l in trainer.state.log_history if actual_key in l]
             ax.plot(values)
@@ -189,7 +229,7 @@ def main():
             print(f"Plotted {len(values)} points for {title} (key: {actual_key})")
         else:
             print(f"Warning: Could not find log key for {title}")
-            
+
     plt.tight_layout()
     plt.savefig(f"{args.output_dir}/reward_curves.png")
     print(f"Reward curves saved to {args.output_dir}/reward_curves.png")
