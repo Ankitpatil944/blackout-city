@@ -1,206 +1,127 @@
-# Blackstart City
+# 🏙️ Blackstart City
 
-`Blackstart City` is an OpenEnv benchmark for **city-scale cascading blackout recovery**. An AI restoration commander operates inside a multi-role emergency command loop after a blackout: it must restart generation, energize substations, inspect risky lines, restore hospitals and critical services, coordinate scarce field resources, preserve public trust, and avoid a second collapse while the city degrades around it.
+`Blackstart City` is an OpenEnv benchmark for **city-scale cascading blackout recovery**. 
 
-## Why This Benchmark Matters
+An AI restoration commander operates inside a multi-role emergency command loop after a blackout. It must restart generation, energize substations, inspect risky lines, restore hospitals and critical services, coordinate scarce field resources, preserve public trust, and avoid a second collapse while the city degrades around it.
 
-Most agent environments either solve toy tasks or optimize within a single domain. Real critical-infrastructure recovery is harder:
+---
 
-- actions are order-sensitive
-- information is incomplete
-- restoring one part of the system can destabilize another
-- hospitals, telecom, water, and emergency services depend on the same fragile grid
-- field crews, backup assets, and public messaging must stay aligned under pressure
+## 🏆 Hackathon Deliverables
 
-`Blackstart City` tests whether an agent can recover a city safely instead of greedily restoring load and triggering another blackout.
+> [!IMPORTANT]
+> **Hugging Face Space:** [https://huggingface.co/spaces/YOUR-USERNAME/blackout-city](https://huggingface.co/spaces/YOUR-USERNAME/blackout-city) (Please ensure this is public and cloneable!)
 
-## Theme Alignment
+* **Training Script:** [`blackstart_city/training/grpo_train.py`](./blackstart_city/training/grpo_train.py) (Unsloth + TRL GRPO)
+* **Training Evidence:** See the embedded GRPO reward curves below.
+* **Writeup / Blog:** [`docs/hf_mini_blog.md`](./docs/hf_mini_blog.md)
+* **Pitch & Video:** [`docs/pitch_script.md`](./docs/pitch_script.md) & [`docs/video_script.md`](./docs/video_script.md)
 
-This project now spans multiple OpenEnv hackathon themes:
+---
 
-- **Theme #2: Long-Horizon Planning** through multi-step restoration with delayed failure risk
-- **Theme #3.1: World Modeling** through a partially observable professional infrastructure simulation
-- **Theme #1: Multi-Agent Interactions** through the command-center layer: grid operator, emergency coordinator, public information officer, and resource dispatcher recommendations are surfaced every turn
+## 🧠 Multi-Agent Architecture (Theme #1)
 
-The benchmark currently ships with **9 deterministic seeded scenarios**:
+Instead of a single monolithic script, the environment explicitly surfaces recommendations from four specialized agents on every turn. This creates a deeply strategic planning loop (Theme #2) and tests world-modeling capabilities (Theme #3.1).
 
-- `3` easy
-- `3` medium
-- `3` hard
+```mermaid
+graph TD
+    A[Environment State] --> B{Command Center}
+    
+    B -->|Physics & Feeders| C[Grid Operator]
+    B -->|Human Impact| D[Emergency Coordinator]
+    B -->|Logistics| E[Resource Dispatcher]
+    B -->|Trust & Messaging| F[Public Info Officer]
+    
+    C --> G
+    D --> G
+    E --> G
+    F --> G
+    
+    G((Aggregated Strategy)) -->|Agent Decision| A
+```
 
-## Task Families
+---
 
+## 🚀 True RL Training: DeepSeek-Style GRPO
+
+We moved past simple supervised fine-tuning and implemented **Group Relative Policy Optimization (GRPO)** using Unsloth and Hugging Face `TRL`. This removes the need for a VRAM-heavy Critic model and allows our Qwen-based policy to learn rapidly on a single GPU.
+
+```mermaid
+flowchart LR
+    A[Observation] --> B(Qwen 2.5 Instruct)
+    B -->|Generates 4 Actions| C{Reward Engine}
+    
+    C -->|Valid JSON?| D[Format Reward]
+    C -->|Tactical Priority?| E[Quality Reward]
+    C -->|Matches Command Center?| F[Alignment Reward]
+    
+    D & E & F --> G[Group Advantage Calculation]
+    G -->|Weight Update| B
+```
+
+### GRPO Training Evidence
+
+We track three independent multi-objective reward signals during training to ensure the model learns syntax, tactics, and overarching strategy simultaneously.
+
+![GRPO Reward Curves](artifacts/blackstart-city-grpo/reward_curves.png)
+
+---
+
+## 🏗️ Environment Design
+
+The environment uses typed, structured observations and actions.
+
+### Task Families
 | Task ID | Difficulty | What It Tests |
 |---|---|---|
 | `local_blackstart` | Easy | basic blackstart sequencing and restoring one hospital |
 | `island_rejoin` | Medium | inspection, multi-island recovery, and safe synchronization |
 | `city_cascade_recovery` | Hard | city-scale recovery under backup timers and cascading-failure risk |
 
-## Environment Design
+### Action Space (`BlackstartAction`)
+* `start_generator`, `energize_substation`, `inspect_line`, `close_line`, `open_line`
+* `restore_critical_node`, `restore_zone`, `shed_zone`
+* `sync_islands`, `activate_battery_support`, `publish_status`
 
-The environment uses typed, structured observations and actions.
+### Observation Space (`BlackstartObservation`)
+* **Physical Grid:** Generation, Load, Frequency, Reserve Margin.
+* **Assets:** Generators, Substations, Lines, Population Zones.
+* **Critical Nodes:** Hospitals, Telecom, Water, Emergency (with active countdown timers).
+* **Command Center:** Coordination score, public trust, dispatch pressure, and multi-agent recommendations.
 
-### Observation includes
+---
 
-- available generation
-- served load
-- reserve margin
-- frequency
-- command-center state: public trust, coordination score, command phase
-- role recommendations and coordination messages
-- resource pressure: repair crews, battery support, telecom support
-- substations
-- lines
-- critical nodes: hospitals, telecom, water, emergency
-- population zones
-- warnings
-- reward breakdown
+## ⚙️ Local Setup
 
-### Actions include
-
-- `start_generator`
-- `energize_substation`
-- `inspect_line`
-- `close_line`
-- `open_line`
-- `restore_critical_node`
-- `restore_zone`
-- `shed_zone`
-- `sync_islands`
-- `activate_battery_support`
-- `publish_status`
-
-### Reward Design
-
-The reward is fully deterministic and decomposed into:
-
-- critical-service restoration
-- load restoration
-- stability and safety
-- inspection quality
-- communication quality
-- action penalties
-- catastrophe penalties
-
-Final task scores are clamped to `(0.01, 0.99)`.
-
-## Local Setup
-
-```powershell
+```bash
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+# On Windows: .venv\Scripts\Activate.ps1
+source .venv/bin/activate
+
 pip install --upgrade pip
 pip install -e .[dev]
 ```
 
-This project is intended to be installed with the current OpenEnv package:
+*(This project complies with the OpenEnv structure and utilizes `openenv-core`.)*
 
-```powershell
-pip install openenv-core
-```
+### Run Locally
 
-If you install via `pip install -e .[dev]`, the correct OpenEnv dependency is already included through `pyproject.toml`.
-
-## Run Locally
-
-```powershell
+Start the FastAPI server:
+```bash
 python -m server.app
 ```
+Then navigate to: `http://127.0.0.1:8000/web`
 
-Then open:
-
-```text
-http://127.0.0.1:8000/web
-```
-
-```powershell
+### Validation & Testing
+```bash
+# Run unit tests
 python -m pytest -q
+
+# Run baseline inference
 python inference.py
-python -m blackstart_city.training.validate_submission
+
+# Verify OpenEnv compliance
 openenv validate
 ```
 
-## Reward Decomposition
-
-The environment uses a multi-objective reward structure designed for stable RL training:
-
-- **Restoration (30%)**: Population-weighted critical service power-up.
-- **Load (22%)**: Percentage of city demand served.
-- **Stability (22%)**: Frequency maintenance (59.7-60.3 Hz) and reserve margin safety.
-- **Inspection (10%)**: Quality and necessity of line inspections.
-- **Efficiency (8%)**: Penalties for excessive steps or idle time.
-- **Communication (8%)**: Quality of status reports published to the dispatch center.
-
-Scores are strictly clamped to `[0.01, 0.99]` to comply with OpenEnv bot evaluation constraints.
-
-## Reward Comparison Plot
-
-To visualize the improvement in rewards across difficulty tiers, we have added a reward comparison plot. The plot is generated after evaluations and saved as `artifacts/reward_comparison.png`. Below is an example of the plot:
-
-![Reward Comparison](artifacts/reward_comparison.png)
-
-This plot highlights the normalized rewards (0–1) for different policies (greedy, heuristic, SFT, RL) across easy, medium, and hard tasks.
-
-## Pitch Assets
-
-Presentation materials are included under [`docs/`](./docs):
-
-- [`docs/pitch_script.md`](./docs/pitch_script.md)
-- [`docs/demo_runbook.md`](./docs/demo_runbook.md)
-- [`docs/hf_mini_blog.md`](./docs/hf_mini_blog.md)
-- [`docs/video_script.md`](./docs/video_script.md)
-
-## Minimal Training Story
-
-The repository includes training scaffolding under [`blackstart_city/training`](./blackstart_city/training):
-
-- `build_dataset.py` generates rollout data from the heuristic baseline
-- `trl_train.py` shows a minimal TRL-style training entrypoint
-- `eval.py` compares baseline and trained policies on fixed seeds
-- [`train_colab.md`](./train_colab.md) describes the intended HF TRL / Colab workflow
-
-This is designed to support the hackathon requirement of showing a minimal training script using HF TRL or a similar lightweight setup.
-
-### Quick Before / After Evaluation
-
-```powershell
-python -m blackstart_city.training.eval --policy greedy --pretty
-python -m blackstart_city.training.eval --policy heuristic --pretty
-python -m blackstart_city.training.trl_train --dry-run
-```
-
-## Repository Layout
-
-```text
-.
-|-- README.md
-|-- openenv.yaml
-|-- pyproject.toml
-|-- Dockerfile
-|-- inference.py
-|-- client.py
-|-- models.py
-|-- blackstart_city/
-|   |-- env.py
-|   |-- models.py
-|   |-- grading.py
-|   |-- baseline.py
-|   |-- tasks/
-|   |-- training/
-|   `-- server/
-|-- server/
-|   |-- app.py
-|   `-- web_ui.py
-`-- tests/
-```
-
-## What Makes This Submission Strong
-
-- real causal system dynamics instead of prompt-only reasoning
-- deterministic seeded scenarios
-- explicit easy / medium / hard progression
-- critical-service dependencies with visible consequences
-- structured OpenEnv-compliant actions and observations
-- reward shaping that is easy to visualize and train against
-- a pitch-grade `/web` surface that makes the city-scale cascade legible in seconds
-- a multi-agent command layer that turns grid recovery into a coordination benchmark rather than a single-role simulator
+---
+*Built for the OpenEnv Hackathon.*
