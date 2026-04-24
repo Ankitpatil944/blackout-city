@@ -73,7 +73,9 @@ flowchart TD
     end
 
     subgraph Optimization [PPO / GRPO Update]
-        R1 and R2 and R3 --> SUM[Sum Rewards per Action]
+        R1 --> SUM[Sum Rewards per Action]
+        R2 --> SUM
+        R3 --> SUM
         SUM --> ADV[Compute Group Relative Advantage]
         ADV -->|Policy Gradient Update| LLM
     end
