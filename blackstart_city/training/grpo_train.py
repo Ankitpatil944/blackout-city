@@ -132,7 +132,7 @@ def main():
         output_dir=args.output_dir,
         learning_rate=5e-6,
         lr_scheduler_type="cosine",
-        logging_steps=5,
+        logging_steps=1,
         max_steps=args.max_steps,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
@@ -164,19 +164,33 @@ def main():
 
     # Three reward curves on one plot — show judges all three signals
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    reward_keys = [
-        "rewards/format_reward_func",
-        "rewards/alignment_reward_func",
-        "rewards/action_quality_reward_func",
+    reward_keys_substrings = [
+        "format_reward_func",
+        "alignment_reward_func",
+        "action_quality_reward_func",
     ]
     titles = ["Format Reward", "Alignment Reward", "Quality Reward"]
-    for ax, key, title in zip(axes, reward_keys, titles):
-        values = [l[key] for l in trainer.state.log_history if key in l]
-        if values:
+    
+    for ax, sub, title in zip(axes, reward_keys_substrings, titles):
+        # Find the actual key used by GRPOTrainer (it varies by TRL version)
+        actual_key = None
+        for log in trainer.state.log_history:
+            for k in log.keys():
+                if sub in k:
+                    actual_key = k
+                    break
+            if actual_key: break
+            
+        if actual_key:
+            values = [l[actual_key] for l in trainer.state.log_history if actual_key in l]
             ax.plot(values)
             ax.set_title(title)
             ax.set_xlabel("Step")
             ax.set_ylabel("Mean Reward")
+            print(f"Plotted {len(values)} points for {title} (key: {actual_key})")
+        else:
+            print(f"Warning: Could not find log key for {title}")
+            
     plt.tight_layout()
     plt.savefig(f"{args.output_dir}/reward_curves.png")
     print(f"Reward curves saved to {args.output_dir}/reward_curves.png")
