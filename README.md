@@ -121,6 +121,14 @@ The environment uses a multi-objective reward structure designed for stable RL t
 
 Scores are strictly clamped to `[0.01, 0.99]` to comply with OpenEnv bot evaluation constraints.
 
+## Reward Comparison Plot
+
+To visualize the improvement in rewards across difficulty tiers, we have added a reward comparison plot. The plot is generated after evaluations and saved as `artifacts/reward_comparison.png`. Below is an example of the plot:
+
+![Reward Comparison](artifacts/reward_comparison.png)
+
+This plot highlights the normalized rewards (0–1) for different policies (greedy, heuristic, SFT, RL) across easy, medium, and hard tasks.
+
 ## Pitch Assets
 
 Presentation materials are included under [`docs/`](./docs):
