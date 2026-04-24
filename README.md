@@ -26,10 +26,10 @@ Instead of a single monolithic script, the environment explicitly surfaces recom
 graph TD
     A[Environment State] --> B{Command Center}
     
-    B -->|Physics & Feeders| C[Grid Operator]
+    B -->|Physics and Feeders| C[Grid Operator]
     B -->|Human Impact| D[Emergency Coordinator]
     B -->|Logistics| E[Resource Dispatcher]
-    B -->|Trust & Messaging| F[Public Info Officer]
+    B -->|Trust and Messaging| F[Public Info Officer]
     
     C --> G
     D --> G
@@ -50,9 +50,9 @@ flowchart LR
     A[Observation] --> B(Qwen 2.5 Instruct)
     B -->|Generates 4 Actions| C{Reward Engine}
     
-    C -->|Valid JSON?| D[Format Reward]
-    C -->|Tactical Priority?| E[Quality Reward]
-    C -->|Matches Command Center?| F[Alignment Reward]
+    C -->|Check Format| D[Format Reward]
+    C -->|Check Tactics| E[Quality Reward]
+    C -->|Check Alignment| F[Alignment Reward]
     
     D & E & F --> G[Group Advantage Calculation]
     G -->|Weight Update| B
