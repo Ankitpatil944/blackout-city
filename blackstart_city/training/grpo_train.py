@@ -6,17 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from datasets import load_dataset
-<<<<<<< Updated upstream
-
-# Standard HF + PEFT — no Unsloth import so Unsloth cannot auto-patch GRPOTrainer.
-# Unsloth's fast_lora kernels crash with CUBLAS_STATUS_EXECUTION_FAILED on
-# CUDA 13.0 + T4 (cublasGemmEx fp16 failure in apply_lora_mlp_swiglu). Using
-# plain transformers + PEFT avoids all fast-kernel paths entirely.
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import get_peft_model, LoraConfig, TaskType
-=======
 from unsloth import FastLanguageModel, is_bfloat16_supported
->>>>>>> Stashed changes
 
 from trl import GRPOConfig, GRPOTrainer
 from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
