@@ -269,25 +269,60 @@ def main():
     tokenizer.save_pretrained(args.output_dir)
 
     # Show all 5 reward signals to the judges
-    fig, axes = plt.subplots(1, 5, figsize=(22, 4))
-    reward_keys = [
-        "rewards/format_reward_func",
-        "rewards/alignment_reward_func",
-        "rewards/action_quality_reward_func",
-        "rewards/constraint_reward_func",
-        "rewards/failure_context_reward_func",
+    # --- PREMIUM DASHBOARD PLOTTING ---
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    # Set dark theme aesthetics
+    plt.style.use('dark_background')
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6), facecolor='#121212')
+    fig.suptitle('BLACKSTART CITY: GRPO TRAINING DASHBOARD', fontsize=20, fontweight='bold', color='#00FFCC', y=1.05)
+
+    reward_keys_substrings = [
+        "format_reward_func",
+        "alignment_reward_func",
+        "action_quality_reward_func",
     ]
-    titles = ["Format", "Alignment", "Quality", "Constraint", "Theory-of-Mind"]
-    for ax, key, title in zip(axes, reward_keys, titles):
-        values = [l[key] for l in trainer.state.log_history if key in l]
-        if values:
-            ax.plot(values)
-            ax.set_title(title)
-            ax.set_xlabel("Step")
-            ax.set_ylabel("Reward")
+    titles = ["FORMAT INTEGRITY", "AGENT ALIGNMENT", "TACTICAL QUALITY"]
+    colors = ['#FF00FF', '#00CCFF', '#00FF66'] # Neon Pink, Blue, Green
+
+    for ax, sub, title, color in zip(axes, reward_keys_substrings, titles, colors):
+        actual_key = None
+        for log in trainer.state.log_history:
+            for k in log.keys():
+                if sub in k:
+                    actual_key = k
+                    break
+            if actual_key: break
+            
+        if actual_key:
+            raw_values = [l[actual_key] for l in trainer.state.log_history if actual_key in l]
+            
+            # Calculate rolling average for smoothness
+            window = max(1, len(raw_values) // 10)
+            smooth_values = np.convolve(raw_values, np.ones(window)/window, mode='valid')
+            
+            # Plot raw data with transparency
+            ax.plot(raw_values, color=color, alpha=0.2, linewidth=1)
+            # Plot smooth trend line
+            ax.plot(range(window-1, len(raw_values)), smooth_values, color=color, linewidth=3, label='Trend')
+            
+            # Styling
+            ax.set_title(title, fontsize=14, fontweight='bold', color=color, pad=15)
+            ax.set_facecolor('#1e1e1e')
+            ax.grid(True, linestyle='--', alpha=0.1)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.set_xlabel("Training Step", alpha=0.7)
+            if title == "TACTICAL QUALITY":
+                ax.set_ylabel("Reward Value", alpha=0.7)
+            
+            # Add a subtle glow effect
+            ax.fill_between(range(window-1, len(raw_values)), smooth_values, alpha=0.05, color=color)
+
     plt.tight_layout()
-    plt.savefig(f"{args.output_dir}/reward_curves.png")
-    print(f"Reward curves saved to {args.output_dir}/reward_curves.png")
+    plt.savefig(f"{args.output_dir}/reward_curves.png", dpi=150, bbox_inches='tight', facecolor='#121212')
+    print(f"Premium Dashboard saved to {args.output_dir}/reward_curves.png")
     print("Done.")
 
 
