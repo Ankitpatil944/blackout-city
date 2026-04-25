@@ -502,6 +502,11 @@ def main():
     )
     model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
+    # PEFT initialises LoRA A/B in float32 by default. Cast to fp16 so every
+    # matmul in the forward pass stays fp16 (base weights are fp16).
+    for _n, _p in model.named_parameters():
+        if _p.requires_grad and _p.dtype != _dtype:
+            _p.data = _p.data.to(_dtype)
 
     if adapter_path:
         from peft import set_peft_model_state_dict
