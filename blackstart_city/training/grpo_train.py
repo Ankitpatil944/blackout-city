@@ -28,19 +28,25 @@ def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
     1.0 for matching action type AND target_id
     0.3 for matching action type only
     0.0 for no match
-    Fuzzy matching prevents permanent zero std.
     """
     rewards = []
     for prompt, comp in zip(prompts, completions):
         try:
-            prompt_text = prompt[0]["content"] if isinstance(prompt, list) else prompt
-            obs_json_str = prompt_text.split("Observation:\n")[-1]
+            # The observation is in the LAST message of the prompt list
+            user_text = prompt[-1]["content"] if isinstance(prompt, list) else prompt
+            obs_json_str = user_text.split("Observation:\n")[-1]
             obs = json.loads(obs_json_str)
+            
             comp_text = comp[0]["content"] if isinstance(comp, list) else comp
             action = parse_action_text(comp_text)
             reward = 0.0
             if action:
+                # We put role_recommendations inside the observation during build_dataset
                 recs = obs.get("command_center", {}).get("role_recommendations", [])
+                # If not there, check if it was passed as a separate key in the observation
+                if not recs:
+                    recs = obs.get("role_recommendations", [])
+                
                 for rec in recs:
                     rec_action = rec.get("proposed_action")
                     if not rec_action:
@@ -50,7 +56,6 @@ def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
                             reward = 1.0
                             break
                         else:
-                            # Partial credit — right action type, wrong target
                             reward = max(reward, 0.3)
             rewards.append(reward)
         except Exception:
@@ -62,14 +67,15 @@ def action_quality_reward_func(prompts, completions, **kwargs) -> list[float]:
     """
     Graded reward from observation state.
     Base score 0.1 for any valid action ensures nonzero variance.
-    No env.step() — no temporal mismatch.
     """
     rewards = []
     for prompt, comp in zip(prompts, completions):
         try:
-            prompt_text = prompt[0]["content"] if isinstance(prompt, list) else prompt
-            obs_json_str = prompt_text.split("Observation:\n")[-1]
+            # The observation is in the LAST message (the user message)
+            user_text = prompt[-1]["content"] if isinstance(prompt, list) else prompt
+            obs_json_str = user_text.split("Observation:\n")[-1]
             obs_data = json.loads(obs_json_str)
+            
             comp_text = comp[0]["content"] if isinstance(comp, list) else comp
             action = parse_action_text(comp_text)
 
@@ -99,9 +105,7 @@ def action_quality_reward_func(prompts, completions, **kwargs) -> list[float]:
                 score += 1.0
 
             # Reward any generation boost when reserve is low
-            if reserve < 10 and action.action_type.value in (
-                "start_generator", "activate_battery_support"
-            ):
+            if reserve < 10 and action.action_type.value in ("start_generator", "activate_battery_support"):
                 score += 0.5
 
             # Reward shedding load when frequency is critical
@@ -157,6 +161,12 @@ def main():
     dataset = load_dataset("json", data_files="dataset.jsonl", split="train")
 
     def generate_prompt(example):
+        # We include the role recommendations INSIDE the prompt so the model sees it
+        # AND the reward function can find it without extra metadata columns
+        obs = json.loads(example["prompt"])
+        obs["role_recommendations"] = json.loads(example["role_recommendations"])
+        obs_str = json.dumps(obs)
+        
         return {"prompt": [
             {"role": "system", "content": (
                 "You are a Blackstart City grid commander. "
@@ -164,7 +174,7 @@ def main():
                 "Do not include markdown code blocks, explanations, or any other text. "
                 "Example: {\"action_type\": \"start_generator\", \"target_id\": \"gen_1\"}"
             )},
-            {"role": "user", "content": "Observation:\n" + example["prompt"]}
+            {"role": "user", "content": "Observation:\n" + obs_str}
         ]}
 
     dataset = dataset.map(generate_prompt, remove_columns=dataset.column_names)
