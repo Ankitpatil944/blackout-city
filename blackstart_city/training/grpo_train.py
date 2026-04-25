@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from datasets import load_dataset
 from unsloth import FastLanguageModel, PatchFastRL, is_bfloat16_supported
 
@@ -506,6 +507,11 @@ def main():
             autocast_adapter_dtype=False,
         )
         model.set_adapter("sft_init")
+        # Unsloth Qwen kernels expect LoRA weights in compute dtype. Some PEFT
+        # loads keep them in float32, which crashes with Half activations.
+        for name, param in model.named_parameters():
+            if "lora_" in name and param.dtype != torch.float16:
+                param.data = param.data.to(torch.float16)
 
     dataset = load_dataset("json", data_files=args.dataset, split="train")
 
