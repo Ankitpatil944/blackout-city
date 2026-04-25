@@ -499,7 +499,12 @@ def main():
 
     if adapter_path:
         # Load SFT adapter weights as the active trainable adapter for GRPO init.
-        model.load_adapter(adapter_path, adapter_name="sft_init", is_trainable=True)
+        model.load_adapter(
+            adapter_path,
+            adapter_name="sft_init",
+            is_trainable=True,
+            autocast_adapter_dtype=False,
+        )
         model.set_adapter("sft_init")
 
     dataset = load_dataset("json", data_files=args.dataset, split="train")
