@@ -130,7 +130,14 @@ def format_reward_func(completions, **kwargs) -> list[float]:
 
 
 def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
-    """Rewards alignment with command center agent recommendations"""
+    """
+    Rewards alignment with command center agent recommendations.
+
+    Fallback (when role_recommendations is empty — old dataset format):
+    Awards +1.0 if the action targets an unpowered critical node, +0.4 if
+    it starts the first offline blackstart-capable generator. This ensures
+    the function produces variance even without command-center data.
+    """
     rewards = []
     for prompt, comp in zip(prompts, completions):
         try:
@@ -139,15 +146,50 @@ def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
             obs = json.loads(obs_json_str)
             comp_text = comp[0]["content"] if isinstance(comp, list) else comp
             action = parse_action_text(comp_text)
+
+            if action is None:
+                rewards.append(-0.2)
+                continue
+
             reward = 0.0
-            if action:
-                recs = obs.get("command_center", {}).get("role_recommendations", [])
+            recs = obs.get("command_center", {}).get("role_recommendations", [])
+
+            if recs:
+                # Primary path: match against explicit recommendations
                 for rec in recs:
                     rec_action = rec.get("proposed_action")
                     if rec_action and rec_action.get("action_type") == action.action_type.value:
                         if rec_action.get("target_id") == action.target_id:
                             reward = 1.0
                             break
+            else:
+                # Fallback: derive alignment signal from observable state
+                critical_nodes = obs.get("critical_nodes", [])
+                generators = obs.get("generators", [])
+                unpowered_critical_ids = {
+                    n["id"] for n in critical_nodes if not n.get("powered")
+                }
+                online_generators = [g for g in generators if g.get("online")]
+                blackstart_capable_offline = [
+                    g for g in generators
+                    if g.get("blackstart_capable") and not g.get("online")
+                ]
+
+                # Restoring an unpowered critical node is always aligned
+                if action.target_id in unpowered_critical_ids:
+                    reward = 1.0
+                # Starting the first blackstart generator is the correct first move
+                elif (
+                    not online_generators
+                    and action.action_type.value == "start_generator"
+                    and blackstart_capable_offline
+                    and action.target_id == blackstart_capable_offline[0]["id"]
+                ):
+                    reward = 0.8
+                # Any start_generator when nothing is online is reasonable
+                elif not online_generators and action.action_type.value == "start_generator":
+                    reward = 0.4
+
             rewards.append(reward)
         except Exception:
             rewards.append(0.0)
@@ -200,7 +242,15 @@ def action_quality_reward_func(prompts, completions, **kwargs) -> list[float]:
 
 
 def constraint_reward_func(prompts, completions, **kwargs) -> list[float]:
-    """Penalizes actions that violate scenario constraints visible in the observation."""
+    """
+    Penalizes actions that violate scenario constraints visible in the observation.
+
+    Fallback (when active_constraints is empty — old dataset format or early
+    episodes before constraints activate): derives a safety signal from grid
+    physics — shedding zones when frequency is low is compliant (+0.3), trying
+    to restore zones when reserves are critically low is risky (-0.4). This
+    guarantees the function returns varied scores across completions.
+    """
     rewards = []
     for prompt, comp in zip(prompts, completions):
         try:
@@ -211,47 +261,67 @@ def constraint_reward_func(prompts, completions, **kwargs) -> list[float]:
             action = parse_action_text(comp_text)
 
             if action is None:
-                rewards.append(0.0)
+                rewards.append(-0.5)
                 continue
 
             score = 0.5  # base: assume compliant
 
             constraints = obs_data.get("active_constraints", [])
-            for c in constraints:
-                # Skip inactive constraints; penalize already-violated ones too
-                if not c.get("active", True):
-                    continue
-                ct = c.get("constraint_type", "")
+            if constraints:
+                # ── Primary path: evaluate explicit constraints ─────────────
+                for c in constraints:
+                    if not c.get("active", True):
+                        continue
+                    ct = c.get("constraint_type", "")
 
-                # Forbidden target check
-                if ct == "forbidden_target":
-                    if (action.action_type.value == c.get("forbidden_action_type")
-                            and action.target_id == c.get("forbidden_target_id")):
-                        score -= 1.0
+                    if ct == "forbidden_target":
+                        if (action.action_type.value == c.get("forbidden_action_type")
+                                and action.target_id == c.get("forbidden_target_id")):
+                            score -= 1.0
 
-                # Conditional limit check
-                if ct == "conditional_limit":
-                    if (action.action_type.value == "restore_zone"
-                            and action.target_id == c.get("limit_target_id")
-                            and action.requested_mw is not None
-                            and c.get("limit_mw") is not None
-                            and action.requested_mw > c["limit_mw"]):
-                        score -= 0.8
+                    if ct == "conditional_limit":
+                        if (action.action_type.value == "restore_zone"
+                                and action.target_id == c.get("limit_target_id")
+                                and action.requested_mw is not None
+                                and c.get("limit_mw") is not None
+                                and action.requested_mw > c["limit_mw"]):
+                            score -= 0.8
 
-                # Priority order check
-                if ct == "priority_order":
-                    if (action.action_type.value == "restore_zone"
-                            and action.target_id == c.get("before_restoring")):
-                        first_id = c.get("must_restore_first")
-                        nodes = obs_data.get("critical_nodes", [])
-                        first_node = next((n for n in nodes if n.get("id") == first_id), None)
-                        if first_node and not first_node.get("powered"):
-                            score -= 0.7
+                    if ct == "priority_order":
+                        if (action.action_type.value == "restore_zone"
+                                and action.target_id == c.get("before_restoring")):
+                            first_id = c.get("must_restore_first")
+                            nodes = obs_data.get("critical_nodes", [])
+                            first_node = next(
+                                (n for n in nodes if n.get("id") == first_id), None
+                            )
+                            if first_node and not first_node.get("powered"):
+                                score -= 0.7
+            else:
+                # ── Fallback: physics-based safety scoring ─────────────────
+                # (produces variance when no explicit constraints are present)
+                freq = obs_data.get("frequency_hz", 60.0)
+                reserve = obs_data.get("reserve_margin_mw", 0)
 
-            # Bonus: responding to news feed
+                if freq < 59.5:
+                    # Low frequency → shedding is safe, restoring is risky
+                    if action.action_type.value == "shed_zone":
+                        score += 0.3
+                    elif action.action_type.value in ("restore_zone", "restore_critical_node",
+                                                      "energize_substation"):
+                        score -= 0.3
+
+                if reserve < 5 and action.action_type.value == "restore_zone":
+                    # Critically low reserve — don't add more load
+                    score -= 0.4
+
+                if reserve > 20 and action.action_type.value == "shed_zone":
+                    # Plenty of headroom — no need to shed
+                    score -= 0.2
+
+            # ── News-feed bonus (applies in both paths) ───────────────────────
             news = obs_data.get("news_feed", [])
             if news and any(n.get("impact_level") == "critical" for n in news):
-                # Reward actions that address critical news (e.g. restoring the mentioned node)
                 for n in news:
                     if n.get("reduces_backup_node") and action.target_id == n["reduces_backup_node"]:
                         score += 0.5
@@ -266,6 +336,11 @@ def failure_context_reward_func(prompts, completions, **kwargs) -> list[float]:
     """
     ToM Reward: Rewards the model for NOT repeating actions that failed in
     previous tiers (visible in the failure_context).
+
+    Fallback (when failure_context is empty): scores based on whether the model
+    avoids acting on damaged/tripped lines or already-online generators — these
+    are the natural "would fail" actions detectable from observation state alone.
+    This prevents the function from returning a constant 0.0 for every step.
     """
     rewards = []
     for prompt, comp in zip(prompts, completions):
@@ -273,30 +348,50 @@ def failure_context_reward_func(prompts, completions, **kwargs) -> list[float]:
             prompt_text = prompt[0]["content"] if isinstance(prompt, list) else prompt
             obs_json_str = prompt_text.split("Observation:\n")[-1]
             obs_data = json.loads(obs_json_str)
-
-            # Check for failure history
-            failure_ctx = obs_data.get("failure_context", [])
-            if not failure_ctx:
-                rewards.append(0.0)  # No context to learn from
-                continue
-
             comp_text = comp[0]["content"] if isinstance(comp, list) else comp
             action = parse_action_text(comp_text)
-            if not action:
+
+            if action is None:
                 rewards.append(-0.2)
                 continue
 
-            # Check if this specific action was tried and failed before
-            was_failure = False
-            for fail in failure_ctx:
-                for failed_action in fail.get("failed_actions", []):
-                    if (failed_action.get("action_type") == action.action_type.value and
-                        failed_action.get("target_id") == action.target_id):
-                        was_failure = True
-                        break
+            failure_ctx = obs_data.get("failure_context", [])
 
-            # Positive reward for pivoting away from failure, negative for repeating it
-            rewards.append(-1.0 if was_failure else 0.5)
+            if failure_ctx:
+                # ── Primary path: check against recorded failed actions ──────
+                was_failure = False
+                for fail in failure_ctx:
+                    for failed_action in fail.get("failed_actions", []):
+                        if (failed_action.get("action_type") == action.action_type.value
+                                and failed_action.get("target_id") == action.target_id):
+                            was_failure = True
+                            break
+                # Positive reward for pivoting, negative for repeating failures
+                rewards.append(-1.0 if was_failure else 0.5)
+            else:
+                # ── Fallback: penalise predictably-futile actions ────────────
+                # Acting on a damaged or tripped line is a known-failure action.
+                lines = obs_data.get("lines", [])
+                generators = obs_data.get("generators", [])
+
+                damaged_line_ids = {l["id"] for l in lines if l.get("damaged") or l.get("tripped")}
+                online_gen_ids = {g["id"] for g in generators if g.get("online")}
+
+                if (
+                    action.action_type.value in ("close_line", "inspect_line")
+                    and action.target_id in damaged_line_ids
+                ):
+                    # Trying to close an already-damaged line — bad pivot
+                    rewards.append(-0.6)
+                elif (
+                    action.action_type.value == "start_generator"
+                    and action.target_id in online_gen_ids
+                ):
+                    # Starting an already-online generator — wasteful/futile
+                    rewards.append(-0.4)
+                else:
+                    # No detectable futile action — neutral positive
+                    rewards.append(0.3)
         except Exception:
             rewards.append(0.0)
     return rewards
@@ -349,10 +444,11 @@ def main():
         logging_steps=5,
         max_steps=args.max_steps,
         per_device_train_batch_size=1,
-        gradient_accumulation_steps=4,
-        num_generations=4,
+        gradient_accumulation_steps=2,      # faster updates
+        num_generations=8,                   # more samples = more chance of valid JSON
         max_prompt_length=1500,
         max_completion_length=150,
+        temperature=0.9,                     # diversity to escape cold start
         bf16=is_bfloat16_supported(),
         fp16=not is_bfloat16_supported(),
         optim="adamw_8bit",

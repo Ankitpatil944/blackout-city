@@ -93,7 +93,7 @@ class BlackstartCityEnv:
         })
         self._recompute_state()
         self._state.command_center = initial_command_center(self._state)
-        self._state.active_constraints = [c.model_dump() for c in self._scenario.constraints]
+        self._state.active_constraints = list(self._scenario.constraints)
         self._state.news_feed = []
         self._state.constraint_violations = 0
         self._state.score = compute_final_score(self._state, self._scenario)
