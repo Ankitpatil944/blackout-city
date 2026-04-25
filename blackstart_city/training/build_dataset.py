@@ -51,9 +51,16 @@ def build_dataset(output_path: str = "dataset.jsonl", episodes_per_task: int = 2
                     if action is None:
                         break
                     seen_signatures.add(f"{action.action_type.value}|{action.target_id or ''}|{action.requested_mw or 0}")
+                    # Collect role recommendations from the command center agents
+                    role_recs = []
+                    if hasattr(env, "command_center"):
+                        state = env.command_center.get_state()
+                        role_recs = state.role_recommendations
+
                     record = {
                         "prompt": observation_to_prompt(observation),
                         "completion": json.dumps(action.model_dump(mode="json", exclude_none=True), separators=(",", ":")),
+                        "role_recommendations": json.dumps([r.model_dump(mode="json") for r in role_recs])
                     }
                     handle.write(json.dumps(record) + "\n")
                     observation, _, done, _ = env.step(action)
