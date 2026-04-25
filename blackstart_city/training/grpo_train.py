@@ -410,7 +410,7 @@ def main():
     console.print("[bold #00FFCC]⚡ Loading model & tokenizer…[/]")
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model_name,
-        max_seq_length=2048,
+        max_seq_length=4096,
         load_in_4bit=True,
         fast_inference=False,
         max_lora_rank=16,
