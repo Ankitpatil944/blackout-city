@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from datasets import load_dataset
+<<<<<<< Updated upstream
 
 # Standard HF + PEFT — no Unsloth import so Unsloth cannot auto-patch GRPOTrainer.
 # Unsloth's fast_lora kernels crash with CUBLAS_STATUS_EXECUTION_FAILED on
@@ -13,6 +14,9 @@ from datasets import load_dataset
 # plain transformers + PEFT avoids all fast-kernel paths entirely.
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import get_peft_model, LoraConfig, TaskType
+=======
+from unsloth import FastLanguageModel, is_bfloat16_supported
+>>>>>>> Stashed changes
 
 from trl import GRPOConfig, GRPOTrainer
 from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
@@ -43,6 +47,51 @@ REWARD_LABELS = [
     ("Constraint",  "#FFD700"),
     ("Fail. Avoid", "#FF6B6B"),
 ]
+
+
+def _patch_unsloth_lora_matmul() -> None:
+    """Patch Unsloth's LoRA matmul after Unsloth is fully imported.
+
+    Unsloth 2026.4.x can enter a rematerialized forward pass where the base
+    output tensor is fp16/bf16 but the LoRA B matrix is recast to fp32 before
+    `out.addmm_`, causing `self and mat2 must have the same dtype`.
+
+    Keep Unsloth's original base dequant/matmul path, but add the LoRA branch
+    ourselves using the actual output dtype. This avoids editing site-packages
+    and avoids importing kernel modules during Unsloth initialization.
+    """
+    import unsloth.kernels.fast_lora as _fast_lora
+    import unsloth.kernels.utils as _lora_utils
+
+    if getattr(_lora_utils.matmul_lora, "_blackstart_dtype_patch", False):
+        return
+
+    _original_matmul_lora = _lora_utils.matmul_lora
+    _torch_matmul = _lora_utils.torch_matmul
+
+    def _patched_matmul_lora(X, W, W_quant, A, B, s, out=None):
+        base_out = _original_matmul_lora(X, W, W_quant, None, None, s, out=out)
+        if A is None:
+            return base_out
+
+        reshape = X.dim() == 3
+        if reshape:
+            batch, seq_len = X.shape[0], X.shape[1]
+            X_flat = X.view(-1, X.shape[-1])
+            out_flat = base_out.view(-1, base_out.shape[-1])
+        else:
+            X_flat = X
+            out_flat = base_out
+
+        compute_dtype = out_flat.dtype
+        XA = _torch_matmul(X_flat.to(compute_dtype), A.t().to(compute_dtype))
+        out_flat.addmm_(XA, B.t().to(compute_dtype), alpha=s)
+
+        return out_flat.view(batch, seq_len, -1) if reshape else out_flat
+
+    _patched_matmul_lora._blackstart_dtype_patch = True
+    _lora_utils.matmul_lora = _patched_matmul_lora
+    _fast_lora.matmul_lora = _patched_matmul_lora
 
 
 def _print_banner(model_name: str, max_steps: int, output_dir: str) -> None:
@@ -475,6 +524,7 @@ def main():
     base_model_name, adapter_path = _resolve_base_and_adapter(args.model_name, args.adapter_path)
     os.makedirs(args.output_dir, exist_ok=True)
     _print_banner(base_model_name, args.max_steps, args.output_dir)
+    _patch_unsloth_lora_matmul()
     if adapter_path:
         console.print(
             f"[bold #FFD700]↪ Continuing from adapter:[/] [white]{adapter_path}[/]"
