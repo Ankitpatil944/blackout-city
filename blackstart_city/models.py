@@ -340,11 +340,11 @@ class BlackstartObservation(OpenEnvObservation):
     warnings: list[str]
     allowed_actions: list[ActionType]
     reward_breakdown: RewardBreakdown
+    active_constraints: list[Constraint] = Field(default_factory=list)
+    news_feed: list[NewsEvent] = Field(default_factory=list)
     last_action_result: Optional[str] = None
     last_action_error: Optional[str] = None
     command_center: CommandCenterState = Field(default_factory=CommandCenterState)
-    active_constraints: list[Constraint] = Field(default_factory=list)
-    news_feed: list[NewsEvent] = Field(default_factory=list)
     rubric: RubricScore = Field(default_factory=RubricScore)
 
     model_config = ConfigDict(extra="forbid")
@@ -374,6 +374,8 @@ class BlackstartState(OpenEnvState):
     catastrophe_triggered: bool = False
     hospital_failures: int = 0
     failed_critical_nodes: list[str] = Field(default_factory=list)
+    active_constraints: list[Constraint] = Field(default_factory=list)
+    news_feed: list[NewsEvent] = Field(default_factory=list)
     last_action_result: Optional[str] = None
     last_action_error: Optional[str] = None
     published_status: Optional[StatusUpdate] = None
@@ -381,8 +383,6 @@ class BlackstartState(OpenEnvState):
     score: float = 0.01
     reward_breakdown: RewardBreakdown = Field(default_factory=RewardBreakdown)
     command_center: CommandCenterState = Field(default_factory=CommandCenterState)
-    active_constraints: list[Constraint] = Field(default_factory=list)
-    news_feed: list[NewsEvent] = Field(default_factory=list)
     constraint_violations: int = 0
     rubric: RubricScore = Field(default_factory=RubricScore)
     infeasible_emergency_streak: int = 0
