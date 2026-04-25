@@ -6,10 +6,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from datasets import load_dataset
-from unsloth import FastLanguageModel, PatchFastRL, is_bfloat16_supported
-
-# This makes the GRPO training logs look nice in the terminal/colab
-PatchFastRL("GRPO", FastLanguageModel)
+# PatchFastRL is intentionally NOT called here. Unsloth 2026.4.x has a dtype
+# bug in its fast_lora kernel (Half vs Float in matmul_lora/backward) that
+# cannot be fixed from user code. Standard TRL GRPOTrainer is used instead.
+from unsloth import FastLanguageModel, is_bfloat16_supported
 
 from trl import GRPOConfig, GRPOTrainer
 from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
@@ -477,44 +477,44 @@ def main():
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=base_model_name,
         max_seq_length=4096,
-        load_in_4bit=False,
-        fast_inference=False,
-        max_lora_rank=16,
-        gpu_memory_utilization=0.6,
+        load_in_4bit=True,
     )
 
     # PEFT 0.14.0 bug workaround
     model.warnings_issued = {}
 
-    # Always initialize LoRA wrappers via Unsloth first; Qwen fast-path kernels
-    # expect these wrappers (e.g. apply_qkv) to exist during GRPO rollout.
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
         target_modules=["q_proj","k_proj","v_proj","o_proj",
                         "gate_proj","up_proj","down_proj"],
         lora_alpha=16,
-        use_gradient_checkpointing="unsloth",
+        use_gradient_checkpointing=False,
         random_state=3407,
     )
 
     if adapter_path:
-        # Load SFT adapter weights as the active trainable adapter for GRPO init.
-        model.load_adapter(
-            adapter_path,
-            adapter_name="sft_init",
-            is_trainable=True,
-            autocast_adapter_dtype=False,
-        )
-        model.set_adapter("sft_init")
-
-    # Unsloth Qwen kernels require ALL LoRA params (both freshly initialized
-    # and loaded from SFT) to be in the compute dtype (fp16). Cast unconditionally
-    # here so GRPO never hits a Half/Float mismatch during forward.
-    compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-    for name, param in model.named_parameters():
-        if "lora_" in name and param.dtype != compute_dtype:
-            param.data = param.data.to(compute_dtype)
+        # Load SFT weights directly into the default adapter at compute dtype.
+        # Do NOT use load_adapter() — it creates a second adapter slot ("sft_init")
+        # alongside "default". Unsloth's fast_lora kernel hardcodes "default", so
+        # "default" adapter (float32 from get_peft_model) stays active and crashes.
+        # set_peft_model_state_dict writes into the existing default slot and
+        # respects name mapping, so Unsloth always sees the correct dtype.
+        from peft import set_peft_model_state_dict
+        from safetensors.torch import load_file as _load_safetensors
+        _compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        _sft_path = Path(adapter_path) / "adapter_model.safetensors"
+        if _sft_path.exists():
+            _sft_weights = {
+                k: v.to(_compute_dtype)
+                for k, v in _load_safetensors(str(_sft_path)).items()
+            }
+            set_peft_model_state_dict(model, _sft_weights)
+            console.print(
+                f"[green]Loaded {len(_sft_weights)} SFT weights → {_compute_dtype}[/]"
+            )
+        else:
+            console.print(f"[yellow]No adapter_model.safetensors at {_sft_path}, using random LoRA[/]")
 
     dataset = load_dataset("json", data_files=args.dataset, split="train")
 
@@ -554,10 +554,18 @@ def main():
     ]
     _reward_w = [0.2, 0.2, 0.2, 0.2, 0.2]
 
-    def combined_reward_func(completions, **kwargs):
-        import torch as _torch
-        scores = [_torch.tensor(fn(completions, **kwargs)) for fn in _reward_fns]
-        return sum(w * s for w, s in zip(_reward_w, scores)).tolist()
+    def combined_reward_func(prompts, completions, **kwargs):
+        """Weighted sum of all 5 reward signals. Used as fallback when
+        reward_weights is not supported by the installed TRL version."""
+        total = [0.0] * len(completions)
+        for fn, w in zip(_reward_fns, _reward_w):
+            try:
+                scores = fn(prompts=prompts, completions=completions, **kwargs)
+            except TypeError:
+                scores = fn(completions=completions, **kwargs)
+            for i, s in enumerate(scores):
+                total[i] += w * float(s)
+        return total
 
     try:
         trainer = GRPOTrainer(
@@ -581,22 +589,28 @@ def main():
             callbacks=[RichGRPOCallback(log_every=5)],
         )
 
-    # Final dtype guard — must run immediately before train() because
-    # load_adapter / set_adapter can re-initialize LoRA B matrices to float32
-    # even after an earlier cast. Unsloth's fast_lora kernel requires A/B to
-    # match the activation dtype (fp16 or bf16) or addmm_ will raise.
+    # Final dtype guard — must run immediately before train().
+    # GRPOTrainer creates an internal ref_model (frozen copy) during __init__.
+    # That copy is NOT the same Python object as `model`, so iterating
+    # model.named_parameters() does not fix ref_model's float32 LoRA tensors.
+    # We must cast BOTH model and trainer.ref_model here.
     _compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     _cast_count = 0
-    for _name, _param in model.named_parameters():
-        # Unsloth internal adapter tensors are not consistently named with "lora_".
-        # Cast every trainable floating tensor to compute dtype to avoid backward
-        # addmm dtype mismatches in fast_lora kernels.
-        if _param.requires_grad and _param.is_floating_point() and _param.dtype != _compute_dtype:
-            _param.data = _param.data.to(_compute_dtype)
-            _cast_count += 1
+
+    def _cast_all_lora(m):
+        nonlocal _cast_count
+        for _n, _p in m.named_parameters():
+            if _p.is_floating_point() and _p.dtype != _compute_dtype:
+                _p.data = _p.data.to(_compute_dtype)
+                _cast_count += 1
+
+    _cast_all_lora(model)
+    if hasattr(trainer, "ref_model") and trainer.ref_model is not None:
+        _cast_all_lora(trainer.ref_model)
+
     if _cast_count:
         console.print(
-            f"[yellow]Cast {_cast_count} trainable tensors → {_compute_dtype} before training[/]"
+            f"[yellow]Cast {_cast_count} tensors → {_compute_dtype} (model + ref_model)[/]"
         )
 
     console.print(Panel(
@@ -637,11 +651,18 @@ def main():
     axes_flat = axes.flatten()
     axes_flat[5].set_visible(False)
 
+    # Detect whether training used individual reward funcs or combined fallback
+    _used_combined = not any(
+        any(sub in k for k in trainer.state.log_history[0].keys() if trainer.state.log_history)
+        for sub in reward_keys_substrings
+    ) if trainer.state.log_history else False
+
     for ax, sub, title, color in zip(axes_flat[:5], reward_keys_substrings, titles, colors):
         actual_key = None
+        search_key = "combined_reward_func" if _used_combined else sub
         for log in trainer.state.log_history:
             for k in log.keys():
-                if sub in k:
+                if search_key in k:
                     actual_key = k
                     break
             if actual_key:
