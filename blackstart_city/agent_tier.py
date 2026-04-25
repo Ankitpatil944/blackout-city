@@ -76,7 +76,7 @@ def _to_observation(observation) -> BlackstartObservation:
     if isinstance(observation, dict):
         valid_fields = BlackstartObservation.model_fields.keys()
         clean = {k: v for k, v in observation.items() if k in valid_fields}
-        return BlackstartObservation(**clean)
+        return BlackstartObservation.model_validate(clean)
     return observation
 
 
@@ -236,7 +236,7 @@ class AgentTier:
 
         while not done:
             # obs may be an object or a dict depending on env version
-            obs_dict = obs if isinstance(obs, dict) else obs.dict()
+            obs_dict = obs if isinstance(obs, dict) else obs.model_dump()
 
             # Expose failure contexts accumulated so far inside the observation
             # (env.inject_failure_context handles this for the *next* reset;
@@ -250,7 +250,7 @@ class AgentTier:
             total_reward += reward
 
             # Record compact action log
-            action_dict = action if isinstance(action, dict) else action.dict()
+            action_dict = action if isinstance(action, dict) else action.model_dump()
             action_history.append(
                 {
                     "step": len(action_history),
@@ -261,13 +261,13 @@ class AgentTier:
             )
 
             # Track the most recent warning
-            obs_dict2 = obs if isinstance(obs, dict) else obs.dict()
+            obs_dict2 = obs if isinstance(obs, dict) else obs.model_dump()
             warnings = obs_dict2.get("warnings") or obs_dict2.get("active_warnings") or []
             if warnings:
                 last_warning = warnings[-1]
 
         # Determine success: use info["success"] if available, else score >= 0.6
-        final_obs_dict = obs if isinstance(obs, dict) else obs.dict()
+        final_obs_dict = obs if isinstance(obs, dict) else obs.model_dump()
         score = float(
             info.get("score")
             or final_obs_dict.get("reward_breakdown", {}).get("total", total_reward)
