@@ -18,8 +18,9 @@ import json
 
 def _build_messages(prompt: str, completion: str) -> str:
     return (
-        "<|system|>You are a power-grid restoration policy. Return only JSON.\n"
-        f"<|user|>{prompt}\n"
+        "<|system|>You are a city blackout restoration policy. "
+        "Return exactly one valid JSON action object and nothing else.\n"
+        f"<|user|>Observation:\n{prompt}\n"
         f"<|assistant|>{completion}"
     )
 
@@ -71,6 +72,9 @@ def main() -> None:
         max_seq_length=2048,
         load_in_4bit=True,
     )
+
+    # PEFT workaround
+    model.warnings_issued = {}
 
     model = FastLanguageModel.get_peft_model(
         model,
