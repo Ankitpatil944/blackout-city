@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from datasets import load_dataset
@@ -55,6 +56,36 @@ def _print_banner(model_name: str, max_steps: int, output_dir: str) -> None:
     cfg.add_row("Output Dir", output_dir)
     cfg.add_row("Rewards",    "5 signals  ·  equal weights [0.2 each]")
     console.print(Panel(cfg, title="[bold #00FFCC]Config[/]", border_style="#333333"))
+
+
+def _resolve_base_and_adapter(
+    model_name: str, adapter_path: str | None
+) -> tuple[str, str | None]:
+    """Resolve base-model + optional LoRA adapter path.
+
+    Supports two modes:
+    1) Explicit: --model-name <base-model> --adapter-path <adapter-dir>
+    2) Implicit: --model-name <adapter-dir> (auto-detect via adapter_config.json)
+    """
+    if adapter_path:
+        return model_name, adapter_path
+
+    maybe_dir = Path(model_name)
+    adapter_cfg = maybe_dir / "adapter_config.json"
+    full_cfg = maybe_dir / "config.json"
+
+    # If this looks like an adapter-only directory, derive base model from adapter config.
+    if maybe_dir.is_dir() and adapter_cfg.exists() and not full_cfg.exists():
+        with adapter_cfg.open("r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        base_model = cfg.get("base_model_name_or_path")
+        if not base_model:
+            raise ValueError(
+                f"Adapter config found at {adapter_cfg}, but base_model_name_or_path is missing."
+            )
+        return base_model, str(maybe_dir)
+
+    return model_name, None
 
 
 class RichGRPOCallback(TrainerCallback):
@@ -420,83 +451,30 @@ def failure_context_reward_func(prompts, completions, **kwargs) -> list[float]:
     return rewards
 
 
-def _push_to_hub(model, tokenizer, args) -> None:
-    """Merge LoRA adapters into the base weights and push to HuggingFace Hub."""
-    import os as _os
-    token = args.hub_token or _os.environ.get("HF_TOKEN")
-
-    if not args.hub_model_id:
-        console.print("[bold yellow]⚠  --hub-model-id not set — skipping Hub push.[/]")
-        return
-
-    console.print(Panel(
-        f"[bold #00FFCC]🚀  Merging LoRA → pushing to [white]{args.hub_model_id}[/][/]",
-        border_style="#00FFCC", padding=(0, 2)
-    ))
-
-    merged_dir = args.output_dir + "_merged"
-    # Unsloth's save_pretrained_merged fuses adapters into fp16 base weights.
-    model.save_pretrained_merged(merged_dir, tokenizer, save_method="merged_16bit")
-
-    from huggingface_hub import HfApi
-    api = HfApi(token=token)
-
-    # Create the model repo if it doesn't exist yet
-    api.create_repo(repo_id=args.hub_model_id, repo_type="model", exist_ok=True)
-    api.upload_folder(
-        folder_path=merged_dir,
-        repo_id=args.hub_model_id,
-        repo_type="model",
-        commit_message="GRPO v2 — 500 steps, failure_context-rich dataset",
-    )
-
-    # Also upload the reward curve image
-    png = f"{args.output_dir}/reward_curves.png"
-    if _os.path.exists(png):
-        api.upload_file(
-            path_or_fileobj=png,
-            path_in_repo="reward_curves.png",
-            repo_id=args.hub_model_id,
-            repo_type="model",
-        )
-
-    console.print(f"[bold #00FF66]✅  Model pushed → https://huggingface.co/{args.hub_model_id}[/]")
-
-    # Optionally push the dataset used for this run
-    if args.hub_dataset_id and _os.path.exists(args.dataset):
-        api.create_repo(repo_id=args.hub_dataset_id, repo_type="dataset", exist_ok=True)
-        api.upload_file(
-            path_or_fileobj=args.dataset,
-            path_in_repo="dataset_v2.jsonl",
-            repo_id=args.hub_dataset_id,
-            repo_type="dataset",
-            commit_message="Augmented GRPO dataset — failure_context-rich",
-        )
-        console.print(f"[bold #00FF66]✅  Dataset pushed → https://huggingface.co/datasets/{args.hub_dataset_id}[/]")
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name", default="Qwen/Qwen2.5-3B-Instruct")
+    parser.add_argument(
+        "--adapter-path",
+        default=None,
+        help="Optional LoRA adapter path to continue training from SFT output.",
+    )
     parser.add_argument("--output-dir", default="artifacts/blackstart-city-grpo")
     parser.add_argument("--dataset", default="dataset.jsonl", help="Path to training dataset")
     parser.add_argument("--max-steps", type=int, default=500)
-    parser.add_argument("--push-to-hub", action="store_true",
-                        help="Merge LoRA and push model + dataset to HuggingFace Hub after training")
-    parser.add_argument("--hub-model-id", default=None,
-                        help="HF repo id to push to, e.g. your-username/blackstart-city-grpo-v2")
-    parser.add_argument("--hub-dataset-id", default=None,
-                        help="HF dataset repo id, e.g. your-username/blackstart-city-dataset")
-    parser.add_argument("--hub-token", default=None,
-                        help="HuggingFace write token (or set HF_TOKEN env var)")
     args = parser.parse_args()
 
+    base_model_name, adapter_path = _resolve_base_and_adapter(args.model_name, args.adapter_path)
     os.makedirs(args.output_dir, exist_ok=True)
-    _print_banner(args.model_name, args.max_steps, args.output_dir)
+    _print_banner(base_model_name, args.max_steps, args.output_dir)
+    if adapter_path:
+        console.print(
+            f"[bold #FFD700]↪ Continuing from adapter:[/] [white]{adapter_path}[/]"
+        )
 
     console.print("[bold #00FFCC]⚡ Loading model & tokenizer…[/]")
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=args.model_name,
+        model_name=base_model_name,
         max_seq_length=4096,
         load_in_4bit=True,
         fast_inference=False,
@@ -507,15 +485,18 @@ def main():
     # PEFT 0.14.0 bug workaround
     model.warnings_issued = {}
 
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=16,
-        target_modules=["q_proj","k_proj","v_proj","o_proj",
-                        "gate_proj","up_proj","down_proj"],
-        lora_alpha=16,
-        use_gradient_checkpointing="unsloth",
-        random_state=3407,
-    )
+    if adapter_path:
+        model.load_adapter(adapter_path, adapter_name="default", is_trainable=True)
+    else:
+        model = FastLanguageModel.get_peft_model(
+            model,
+            r=16,
+            target_modules=["q_proj","k_proj","v_proj","o_proj",
+                            "gate_proj","up_proj","down_proj"],
+            lora_alpha=16,
+            use_gradient_checkpointing="unsloth",
+            random_state=3407,
+        )
 
     dataset = load_dataset("json", data_files=args.dataset, split="train")
 
@@ -573,9 +554,6 @@ def main():
     ))
     model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
-
-    if args.push_to_hub:
-        _push_to_hub(model, tokenizer, args)
 
     # --- PREMIUM DASHBOARD — all 5 reward signals ---
     plt.style.use('dark_background')
