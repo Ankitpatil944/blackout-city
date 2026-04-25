@@ -117,13 +117,22 @@ class RichGRPOCallback(TrainerCallback):
 
 
 def format_reward_func(completions, **kwargs) -> list[float]:
-    """Gate reward — valid JSON action = 1.0, invalid = 0.0"""
+    """Gate reward — valid JSON action = 1.0, with partial credit for structure."""
     rewards = []
     for comp in completions:
         try:
             text = comp[0]["content"] if isinstance(comp, list) else comp
+            # Partial credit for just trying to use JSON
+            reward = 0.0
+            if "{" in text and "}" in text:
+                reward += 0.2
+            if '"action_type"' in text:
+                reward += 0.3
+                
             action = parse_action_text(text)
-            rewards.append(1.0 if action is not None else 0.0)
+            if action is not None:
+                reward = 1.0
+            rewards.append(reward)
         except Exception:
             rewards.append(0.0)
     return rewards
@@ -132,11 +141,7 @@ def format_reward_func(completions, **kwargs) -> list[float]:
 def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
     """
     Rewards alignment with command center agent recommendations.
-
-    Fallback (when role_recommendations is empty — old dataset format):
-    Awards +1.0 if the action targets an unpowered critical node, +0.4 if
-    it starts the first offline blackstart-capable generator. This ensures
-    the function produces variance even without command-center data.
+    Provides partial credit based on raw text search if JSON parsing fails.
     """
     rewards = []
     for prompt, comp in zip(prompts, completions):
@@ -148,7 +153,15 @@ def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
             action = parse_action_text(comp_text)
 
             if action is None:
-                rewards.append(-0.2)
+                # Partial credit: Did the model at least MENTION a critical node or generator?
+                partial = 0.0
+                critical_ids = [n["id"] for n in obs.get("critical_nodes", [])]
+                gen_ids = [g["id"] for g in obs.get("generators", [])]
+                for cid in critical_ids:
+                    if cid in comp_text: partial += 0.05
+                for gid in gen_ids:
+                    if gid in comp_text: partial += 0.05
+                rewards.append(min(partial, 0.2) - 0.2) # Still a penalty, but variable
                 continue
 
             reward = 0.0
@@ -208,7 +221,11 @@ def action_quality_reward_func(prompts, completions, **kwargs) -> list[float]:
             action = parse_action_text(comp_text)
 
             if action is None:
-                rewards.append(-0.5)
+                # Partial credit: Did the model mention key terms?
+                partial = len(comp_text) / 1000.0 # Length-based reward variance
+                if "generator" in comp_text.lower(): partial += 0.05
+                if "restore" in comp_text.lower(): partial += 0.05
+                rewards.append(min(partial, 0.2) - 0.5)
                 continue
 
             score = 0.0
@@ -261,7 +278,10 @@ def constraint_reward_func(prompts, completions, **kwargs) -> list[float]:
             action = parse_action_text(comp_text)
 
             if action is None:
-                rewards.append(-0.5)
+                # Partial credit for length variance
+                partial = len(comp_text) / 2000.0
+                if "caution" in comp_text.lower(): partial += 0.1
+                rewards.append(min(partial, 0.2) - 0.5)
                 continue
 
             score = 0.5  # base: assume compliant
@@ -352,7 +372,10 @@ def failure_context_reward_func(prompts, completions, **kwargs) -> list[float]:
             action = parse_action_text(comp_text)
 
             if action is None:
-                rewards.append(-0.2)
+                # Partial credit: Did the model mention a previous failure?
+                partial = 0.0
+                if "failed" in comp_text.lower(): partial += 0.1
+                rewards.append(partial - 0.2)
                 continue
 
             failure_ctx = obs_data.get("failure_context", [])
