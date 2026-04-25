@@ -561,6 +561,19 @@ def main():
         callbacks=[RichGRPOCallback(log_every=5)],
     )
 
+    # Final dtype guard — must run immediately before train() because
+    # load_adapter / set_adapter can re-initialize LoRA B matrices to float32
+    # even after an earlier cast. Unsloth's fast_lora kernel requires A/B to
+    # match the activation dtype (fp16 or bf16) or addmm_ will raise.
+    _compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    _cast_count = 0
+    for _name, _param in model.named_parameters():
+        if "lora_" in _name and _param.dtype != _compute_dtype:
+            _param.data = _param.data.to(_compute_dtype)
+            _cast_count += 1
+    if _cast_count:
+        console.print(f"[yellow]Cast {_cast_count} LoRA tensors → {_compute_dtype} before training[/]")
+
     console.print(Panel(
         "[bold #00FFCC]🚀  Training started![/]  Watch the reward table update every 5 steps.",
         border_style="#00FFCC", padding=(0, 2)
