@@ -6,7 +6,6 @@ dist/
 build/
 .env
 outputs/
-artifacts/
 *.egg-info/
 # IDE
 .vscode/

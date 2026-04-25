@@ -51,9 +51,9 @@ def main() -> None:
 
     try:
         from datasets import load_dataset
-        from peft import LoraConfig
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from unsloth import FastLanguageModel
         from trl import SFTConfig, SFTTrainer
+        import torch
     except ImportError as exc:
         print("Missing training dependencies. Install with: pip install -e .[train]")
         raise SystemExit(1) from exc
@@ -65,37 +65,48 @@ def main() -> None:
 
     train_dataset = dataset.map(format_record, remove_columns=dataset.column_names)
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = AutoModelForCausalLM.from_pretrained(args.model_name, device_map="auto")
-    peft_config = LoraConfig(
+    # --- Unsloth Optimization ---
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=args.model_name,
+        max_seq_length=2048,
+        load_in_4bit=True,
+    )
+
+    model = FastLanguageModel.get_peft_model(
+        model,
         r=16,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
         lora_alpha=32,
-        lora_dropout=0.05,
+        lora_dropout=0, # Optimized for speed
         bias="none",
-        task_type="CAUSAL_LM",
+        use_gradient_checkpointing="unsloth",
+        random_state=3407,
     )
 
     trainer = SFTTrainer(
         model=model,
         train_dataset=train_dataset,
+        dataset_text_field="text",
+        max_seq_length=2048,
+        tokenizer=tokenizer,
         args=SFTConfig(
             output_dir=args.output_dir,
-            per_device_train_batch_size=1,
-            gradient_accumulation_steps=8,
+            per_device_train_batch_size=2,
+            gradient_accumulation_steps=4,
             learning_rate=2e-4,
             max_steps=args.max_steps,
             logging_steps=5,
             save_steps=max(10, args.max_steps // 2),
-            completion_only_loss=False,
-            dataset_text_field="text",
+            fp16=not torch.cuda.is_bf16_supported(),
+            bf16=torch.cuda.is_bf16_supported(),
             report_to=[],
         ),
-        peft_config=peft_config,
     )
     trainer.train()
-    trainer.save_model(args.output_dir)
+    model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
-    print(f"Saved adapter and tokenizer to {args.output_dir}")
+    print(f"Saved optimized adapter and tokenizer to {args.output_dir}")
 
     export_path = Path(args.export_policy_json)
     export_path.parent.mkdir(parents=True, exist_ok=True)
