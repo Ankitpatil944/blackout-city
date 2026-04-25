@@ -31,7 +31,7 @@ def main() -> None:
     parser.add_argument("--output-dir", default="artifacts/blackstart-city-sft")
     parser.add_argument("--export-policy-json", default="artifacts/blackstart-city-policy.jsonl")
     parser.add_argument("--max-steps", type=int, default=50)
-    parser.add_argument("--episodes-per-task", type=int, default=4)
+    parser.add_argument("--episodes-per-task", type=int, default=20)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 

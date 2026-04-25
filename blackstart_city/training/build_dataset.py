@@ -5,7 +5,39 @@ from pathlib import Path
 
 from blackstart_city.baseline import choose_heuristic_action
 from blackstart_city.env import BlackstartCityEnv
+from blackstart_city.models import ActionType, BlackstartAction
 from blackstart_city.tasks.catalog import TASK_ORDER
+
+# Phrases that appear in last_action_result when the env rejects or no-ops an
+# action. last_action_error is only set for constraint violations / collapses;
+# ordinary bad actions only show up here.
+_FAILURE_RESULT_SIGNALS = (
+    "not found",
+    "already online",
+    "already energized",
+    "cannot start",
+    "no energized path",
+    "already closed",
+    "already open",
+    "already restored",
+    "already powered",
+    "already active",
+    "already inspected",
+    "unsupported action",
+)
+
+
+def _is_error_result(result: str | None) -> bool:
+    """Return True when last_action_result describes a rejected or no-op action."""
+    if not result:
+        return False
+    lower = result.lower()
+    return any(sig in lower for sig in _FAILURE_RESULT_SIGNALS)
+
+
+def _make_bad_action() -> BlackstartAction:
+    """Return an action guaranteed to fail (non-existent generator target)."""
+    return BlackstartAction(action_type=ActionType.START_GENERATOR, target_id="NONEXISTENT_GEN")
 
 
 def observation_to_prompt(observation, failed_actions: list[dict] | None = None) -> str:
@@ -51,7 +83,7 @@ def observation_to_prompt(observation, failed_actions: list[dict] | None = None)
     return json.dumps(data, separators=(",", ":"))
 
 
-def build_dataset(output_path: str = "dataset.jsonl", episodes_per_task: int = 5) -> Path:
+def build_dataset(output_path: str = "dataset.jsonl", episodes_per_task: int = 20) -> Path:
     path = Path(output_path)
     with path.open("w", encoding="utf-8") as handle:
         for task_id in TASK_ORDER:
@@ -63,6 +95,18 @@ def build_dataset(output_path: str = "dataset.jsonl", episodes_per_task: int = 5
                 # Accumulate actions that the env rejected so we can expose a
                 # non-empty failure_context to the reward function from step 2+.
                 failed_actions: list[dict] = []
+
+                # Every 3rd episode: inject one deliberate bad action first so
+                # failure_context is populated from step 1 onward. We step the
+                # env but skip writing a training record for the bad action so
+                # the model never learns to imitate it.
+                if seed % 3 == 1:
+                    bad = _make_bad_action()
+                    observation, _, _, _ = env.step(bad)
+                    if observation.last_action_error or _is_error_result(observation.last_action_result):
+                        failed_actions.append(
+                            {"action_type": bad.action_type.value, "target_id": bad.target_id}
+                        )
 
                 while not observation.done:
                     action = choose_heuristic_action(
@@ -90,8 +134,9 @@ def build_dataset(output_path: str = "dataset.jsonl", episodes_per_task: int = 5
 
                     observation, _, done, _ = env.step(action)
 
-                    # If the env rejected this action, log it for failure_context.
-                    if observation.last_action_error:
+                    # Detect both hard errors (constraint violations) and soft
+                    # errors (bad target, already-online asset, etc.).
+                    if observation.last_action_error or _is_error_result(observation.last_action_result):
                         failed_actions.append(
                             {
                                 "action_type": action.action_type.value,

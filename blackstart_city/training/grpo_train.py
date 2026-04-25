@@ -424,7 +424,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name", default="Qwen/Qwen2.5-3B-Instruct")
     parser.add_argument("--output-dir", default="artifacts/blackstart-city-grpo")
-    parser.add_argument("--max-steps", type=int, default=200)
+    parser.add_argument("--dataset", default="dataset.jsonl", help="Path to training dataset")
+    parser.add_argument("--max-steps", type=int, default=500)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -453,7 +454,7 @@ def main():
         random_state=3407,
     )
 
-    dataset = load_dataset("json", data_files="dataset.jsonl", split="train")
+    dataset = load_dataset("json", data_files=args.dataset, split="train")
 
     def format_for_grpo(example):
         return {"prompt": [
@@ -471,8 +472,8 @@ def main():
         max_steps=args.max_steps,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=2,
-        num_generations=4,                   # reduced from 8 to prevent Colab OOM
-        generation_batch_size=4,             # must be a multiple of num_generations for TRL
+        num_generations=8,                   # 8 gives better group statistics vs 4 (Unsloth guide)
+        generation_batch_size=8,             # must be a multiple of num_generations for TRL
         max_prompt_length=3500,              # increased to fit full JSON observation
         max_completion_length=150,
         temperature=0.9,
