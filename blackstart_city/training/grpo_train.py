@@ -6,10 +6,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from datasets import load_dataset
-from unsloth import FastLanguageModel, PatchFastRL, is_bfloat16_supported
-
-# This makes the GRPO training logs look nice in the terminal/colab
-PatchFastRL("GRPO", FastLanguageModel)
+# PatchFastRL is intentionally NOT called here. Unsloth 2026.4.x has a dtype
+# bug in its fast_lora kernel (Half vs Float in matmul_lora/backward) that
+# cannot be fixed from user code. Standard TRL GRPOTrainer is used instead.
+from unsloth import FastLanguageModel, is_bfloat16_supported
 
 from trl import GRPOConfig, GRPOTrainer
 from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
@@ -489,7 +489,7 @@ def main():
         target_modules=["q_proj","k_proj","v_proj","o_proj",
                         "gate_proj","up_proj","down_proj"],
         lora_alpha=16,
-        use_gradient_checkpointing="unsloth",
+        use_gradient_checkpointing=False,
         random_state=3407,
     )
 
