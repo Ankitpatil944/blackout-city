@@ -3,8 +3,12 @@ import json
 import os
 import matplotlib.pyplot as plt
 from datasets import load_dataset
+from unsloth import FastLanguageModel, PatchFastRL, is_bfloat16_supported
+
+# This makes the GRPO training logs look nice in the terminal/colab
+PatchFastRL("GRPO", FastLanguageModel)
+
 from trl import GRPOConfig, GRPOTrainer
-from unsloth import FastLanguageModel, is_bfloat16_supported
 from blackstart_city.training.model_utils import parse_action_text
 
 
