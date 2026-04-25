@@ -568,11 +568,16 @@ def main():
     _compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     _cast_count = 0
     for _name, _param in model.named_parameters():
-        if "lora_" in _name and _param.dtype != _compute_dtype:
+        # Unsloth internal adapter tensors are not consistently named with "lora_".
+        # Cast every trainable floating tensor to compute dtype to avoid backward
+        # addmm dtype mismatches in fast_lora kernels.
+        if _param.requires_grad and _param.is_floating_point() and _param.dtype != _compute_dtype:
             _param.data = _param.data.to(_compute_dtype)
             _cast_count += 1
     if _cast_count:
-        console.print(f"[yellow]Cast {_cast_count} LoRA tensors → {_compute_dtype} before training[/]")
+        console.print(
+            f"[yellow]Cast {_cast_count} trainable tensors → {_compute_dtype} before training[/]"
+        )
 
     console.print(Panel(
         "[bold #00FFCC]🚀  Training started![/]  Watch the reward table update every 5 steps.",
