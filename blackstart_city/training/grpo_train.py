@@ -542,9 +542,8 @@ def main():
         max_steps=args.max_steps,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=2,
-        num_generations=8,                   # 8 gives better group statistics vs 4 (Unsloth guide)
-        generation_batch_size=8,             # must be a multiple of num_generations for TRL
-        max_prompt_length=3500,              # increased to fit full JSON observation
+        num_generations=8,
+        max_prompt_length=3500,
         max_completion_length=150,
         temperature=0.9,
         bf16=is_bfloat16_supported(),
