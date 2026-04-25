@@ -339,9 +339,9 @@ class BlackstartObservation(OpenEnvObservation):
     zones: list[ZoneState]
     warnings: list[str]
     allowed_actions: list[ActionType]
+    reward_breakdown: RewardBreakdown
     last_action_result: Optional[str] = None
     last_action_error: Optional[str] = None
-    reward_breakdown: RewardBreakdown
     command_center: CommandCenterState = Field(default_factory=CommandCenterState)
     active_constraints: list[Constraint] = Field(default_factory=list)
     news_feed: list[NewsEvent] = Field(default_factory=list)
