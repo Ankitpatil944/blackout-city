@@ -483,8 +483,6 @@ def main():
     # PEFT 0.14.0 bug workaround
     model.warnings_issued = {}
 
-    # Always initialize LoRA wrappers via Unsloth first; Qwen fast-path kernels
-    # expect these wrappers (e.g. apply_qkv) to exist during GRPO rollout.
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
@@ -496,22 +494,27 @@ def main():
     )
 
     if adapter_path:
-        # Load SFT adapter weights as the active trainable adapter for GRPO init.
-        model.load_adapter(
-            adapter_path,
-            adapter_name="sft_init",
-            is_trainable=True,
-            autocast_adapter_dtype=False,
-        )
-        model.set_adapter("sft_init")
-
-    # Unsloth Qwen kernels require ALL LoRA params (both freshly initialized
-    # and loaded from SFT) to be in the compute dtype (fp16). Cast unconditionally
-    # here so GRPO never hits a Half/Float mismatch during forward.
-    compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-    for name, param in model.named_parameters():
-        if "lora_" in name and param.dtype != compute_dtype:
-            param.data = param.data.to(compute_dtype)
+        # Load SFT weights directly into the default adapter at compute dtype.
+        # Do NOT use load_adapter() — it creates a second adapter slot ("sft_init")
+        # alongside "default". Unsloth's fast_lora kernel hardcodes "default", so
+        # "default" adapter (float32 from get_peft_model) stays active and crashes.
+        # set_peft_model_state_dict writes into the existing default slot and
+        # respects name mapping, so Unsloth always sees the correct dtype.
+        from peft import set_peft_model_state_dict
+        from safetensors.torch import load_file as _load_safetensors
+        _compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        _sft_path = Path(adapter_path) / "adapter_model.safetensors"
+        if _sft_path.exists():
+            _sft_weights = {
+                k: v.to(_compute_dtype)
+                for k, v in _load_safetensors(str(_sft_path)).items()
+            }
+            set_peft_model_state_dict(model, _sft_weights)
+            console.print(
+                f"[green]Loaded {len(_sft_weights)} SFT weights → {_compute_dtype}[/]"
+            )
+        else:
+            console.print(f"[yellow]No adapter_model.safetensors at {_sft_path}, using random LoRA[/]")
 
     dataset = load_dataset("json", data_files=args.dataset, split="train")
 
