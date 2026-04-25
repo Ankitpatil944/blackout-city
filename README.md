@@ -452,7 +452,7 @@ blackstart_city/
 | 🤗 HF Space (live environment) | https://huggingface.co/spaces/YOUR_HF_SPACE |
 | ▶️ Demo video (< 2 min) | https://youtube.com/YOUR_VIDEO |
 | 📝 HF Blog post | https://huggingface.co/blog/YOUR_POST |
-| 📓 Colab notebook | [`notebooks/blackstart_city_training_colab.ipynb`](notebooks/) |
+| 📓 Colab notebook | [`notebooks/blackstart_city_training_colab.ipynb`](notebooks/blackstart_city_training_colab.ipynb) |
 | 📊 Reward curves | `artifacts/reward_comparison.png` |
 
 ---
