@@ -129,7 +129,7 @@ class FailureContextMixin:
 
         # Fallback: return a dict merge if obs has .dict()
         try:
-            obs_dict = obs.dict()
+            obs_dict = obs.model_dump()
             obs_dict["failure_context"] = history_snapshot
             return obs_dict
         except AttributeError:

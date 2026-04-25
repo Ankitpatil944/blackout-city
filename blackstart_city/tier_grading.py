@@ -143,7 +143,7 @@ class TierAwareGrader:
         if not isinstance(raw_result, dict):
             # Pydantic model or dataclass → coerce to dict
             try:
-                raw_result = raw_result.dict()
+                raw_result = raw_result.model_dump()
             except AttributeError:
                 raw_result = vars(raw_result)
 
