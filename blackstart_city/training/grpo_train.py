@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import matplotlib.pyplot as plt
+import numpy as np
 from datasets import load_dataset
 from unsloth import FastLanguageModel, PatchFastRL, is_bfloat16_supported
 
@@ -9,7 +10,110 @@ from unsloth import FastLanguageModel, PatchFastRL, is_bfloat16_supported
 PatchFastRL("GRPO", FastLanguageModel)
 
 from trl import GRPOConfig, GRPOTrainer
+from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 from blackstart_city.training.model_utils import parse_action_text
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from rich import box
+
+console = Console()
+
+BASE_REWARD_KEYS = [
+    "format_reward_func",
+    "alignment_reward_func",
+    "action_quality_reward_func",
+    "constraint_reward_func",
+    "failure_context_reward_func",
+]
+REWARD_LABELS = [
+    ("Format",      "#FF00FF"),
+    ("Alignment",   "#00CCFF"),
+    ("Tact. Quality","#00FF66"),
+    ("Constraint",  "#FFD700"),
+    ("Fail. Avoid", "#FF6B6B"),
+]
+
+
+def _print_banner(model_name: str, max_steps: int, output_dir: str) -> None:
+    banner = Text()
+    banner.append("  ██████╗ ██╗      █████╗  ██████╗██╗  ██╗\n", style="bold #00FFCC")
+    banner.append("  ██╔══██╗██║     ██╔══██╗██╔════╝██║ ██╔╝\n", style="bold #00FFCC")
+    banner.append("  ██████╔╝██║     ███████║██║     █████╔╝ \n", style="bold #00FFCC")
+    banner.append("  ██╔══██╗██║     ██╔══██║██║     ██╔═██╗ \n", style="bold #00FFCC")
+    banner.append("  ██████╔╝███████╗██║  ██║╚██████╗██║  ██╗\n", style="bold #00FFCC")
+    banner.append("  ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝\n", style="bold #00FFCC")
+    banner.append("       BLACKSTART CITY  ·  GRPO TRAINING", style="bold white")
+    console.print(Panel(banner, border_style="#00FFCC", padding=(0, 2)))
+
+    cfg = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
+    cfg.add_column(style="bold #888888")
+    cfg.add_column(style="bold white")
+    cfg.add_row("Model",      model_name)
+    cfg.add_row("Max Steps",  str(max_steps))
+    cfg.add_row("Output Dir", output_dir)
+    cfg.add_row("Rewards",    "5 signals  ·  equal weights [0.2 each]")
+    console.print(Panel(cfg, title="[bold #00FFCC]Config[/]", border_style="#333333"))
+
+
+class RichGRPOCallback(TrainerCallback):
+    """Prints a pretty reward table to the terminal every `log_every` steps."""
+
+    def __init__(self, log_every: int = 5):
+        self.log_every = log_every
+        self._step = 0
+
+    def on_log(self, args: TrainingArguments, state: TrainerState,
+               control: TrainerControl, logs=None, **kwargs):
+        if logs is None:
+            return
+        self._step += 1
+        if self._step % self.log_every != 0:
+            return
+
+        step = int(logs.get("step", state.global_step))
+        loss  = logs.get("loss", logs.get("train_loss", None))
+        lr    = logs.get("learning_rate", None)
+
+        # ── header row ──────────────────────────────────────────────────────
+        tbl = Table(
+            title=f"[bold #00FFCC]Step {step}/{args.max_steps}[/]",
+            box=box.ROUNDED,
+            border_style="#333333",
+            show_header=True,
+            header_style="bold white",
+            padding=(0, 1),
+        )
+        tbl.add_column("Reward Signal",  style="bold",  min_width=16)
+        tbl.add_column("Value",           justify="right", min_width=8)
+        tbl.add_column("Bar",             min_width=20)
+
+        for base_key, (label, color) in zip(BASE_REWARD_KEYS, REWARD_LABELS):
+            # TRL logs rewards as  `rewards/<func_name>`
+            val = None
+            for k, v in logs.items():
+                if base_key in k:
+                    val = v
+                    break
+            if val is None:
+                continue
+            bar_len = int(min(max((val + 1) / 2, 0), 1) * 20)   # map [-1,1] → [0,20]
+            bar = f"[{color}]{'█' * bar_len}{'░' * (20 - bar_len)}[/{color}]"
+            val_str = f"[{color}]{val:+.4f}[/{color}]"
+            tbl.add_row(f"[{color}]{label}[/{color}]", val_str, bar)
+
+        # ── footer: loss + lr ────────────────────────────────────────────────
+        extras = []
+        if loss is not None:
+            extras.append(f"loss [bold white]{loss:.4f}[/]")
+        if lr is not None:
+            extras.append(f"lr [bold white]{lr:.2e}[/]")
+        footer = "  ·  ".join(extras) if extras else ""
+
+        console.print(tbl)
+        if footer:
+            console.print(f"  [dim]{footer}[/dim]\n")
 
 
 def format_reward_func(completions, **kwargs) -> list[float]:
@@ -83,8 +187,11 @@ def action_quality_reward_func(prompts, completions, **kwargs) -> list[float]:
             if freq < 59.5 and action.action_type.value == "shed_zone":
                 score += 0.8
 
+            # Bug fix: only penalize restore_zone if the target is NOT an unpowered critical node
             if unpowered_critical and action.action_type.value == "restore_zone":
-                score -= 0.5
+                unpowered_ids = {n.get("id") for n in unpowered_critical}
+                if action.target_id not in unpowered_ids:
+                    score -= 0.5
 
             rewards.append(max(-1.0, min(1.0, score)))
         except Exception:
@@ -111,7 +218,8 @@ def constraint_reward_func(prompts, completions, **kwargs) -> list[float]:
 
             constraints = obs_data.get("active_constraints", [])
             for c in constraints:
-                if not c.get("active", True) or c.get("violated", False):
+                # Skip inactive constraints; penalize already-violated ones too
+                if not c.get("active", True):
                     continue
                 ct = c.get("constraint_type", "")
 
@@ -202,12 +310,14 @@ def main():
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
+    _print_banner(args.model_name, args.max_steps, args.output_dir)
 
+    console.print("[bold #00FFCC]⚡ Loading model & tokenizer…[/]")
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model_name,
         max_seq_length=2048,
         load_in_4bit=True,
-        fast_inference=True,
+        fast_inference=False,
         max_lora_rank=16,
         gpu_memory_utilization=0.6,
     )
@@ -259,69 +369,85 @@ def main():
             constraint_reward_func,
             failure_context_reward_func,
         ],
-        reward_weights=[0.1, 0.3, 0.2, 0.2, 0.2],
+        reward_weights=[0.2, 0.2, 0.2, 0.2, 0.2],
         args=training_args,
         train_dataset=dataset,
+        callbacks=[RichGRPOCallback(log_every=5)],
     )
 
+    console.print(Panel(
+        "[bold #00FFCC]🚀  Training started![/]  Watch the reward table update every 5 steps.",
+        border_style="#00FFCC", padding=(0, 2)
+    ))
     trainer.train()
+    console.print(Panel(
+        "[bold #00FF66]✅  Training complete!  Saving model…[/]",
+        border_style="#00FF66", padding=(0, 2)
+    ))
     model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
 
-    # Show all 5 reward signals to the judges
-    # --- PREMIUM DASHBOARD PLOTTING ---
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    # Set dark theme aesthetics
+    # --- PREMIUM DASHBOARD — all 5 reward signals ---
     plt.style.use('dark_background')
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6), facecolor='#121212')
-    fig.suptitle('BLACKSTART CITY: GRPO TRAINING DASHBOARD', fontsize=20, fontweight='bold', color='#00FFCC', y=1.05)
+    fig, axes = plt.subplots(2, 3, figsize=(20, 10), facecolor='#121212')
+    fig.suptitle('BLACKSTART CITY: GRPO TRAINING DASHBOARD', fontsize=22,
+                 fontweight='bold', color='#00FFCC', y=1.02)
 
     reward_keys_substrings = [
         "format_reward_func",
         "alignment_reward_func",
         "action_quality_reward_func",
+        "constraint_reward_func",
+        "failure_context_reward_func",
     ]
-    titles = ["FORMAT INTEGRITY", "AGENT ALIGNMENT", "TACTICAL QUALITY"]
-    colors = ['#FF00FF', '#00CCFF', '#00FF66'] # Neon Pink, Blue, Green
+    titles = [
+        "FORMAT INTEGRITY",
+        "AGENT ALIGNMENT",
+        "TACTICAL QUALITY",
+        "CONSTRAINT COMPLIANCE",
+        "FAILURE AVOIDANCE",
+    ]
+    colors = ['#FF00FF', '#00CCFF', '#00FF66', '#FFD700', '#FF6B6B']
 
-    for ax, sub, title, color in zip(axes, reward_keys_substrings, titles, colors):
+    # Flatten axes and hide the unused 6th subplot
+    axes_flat = axes.flatten()
+    axes_flat[5].set_visible(False)
+
+    for ax, sub, title, color in zip(axes_flat[:5], reward_keys_substrings, titles, colors):
         actual_key = None
         for log in trainer.state.log_history:
             for k in log.keys():
                 if sub in k:
                     actual_key = k
                     break
-            if actual_key: break
-            
+            if actual_key:
+                break
+
         if actual_key:
             raw_values = [l[actual_key] for l in trainer.state.log_history if actual_key in l]
-            
-            # Calculate rolling average for smoothness
             window = max(1, len(raw_values) // 10)
-            smooth_values = np.convolve(raw_values, np.ones(window)/window, mode='valid')
-            
-            # Plot raw data with transparency
+            smooth_values = np.convolve(raw_values, np.ones(window) / window, mode='valid')
+
             ax.plot(raw_values, color=color, alpha=0.2, linewidth=1)
-            # Plot smooth trend line
-            ax.plot(range(window-1, len(raw_values)), smooth_values, color=color, linewidth=3, label='Trend')
-            
-            # Styling
-            ax.set_title(title, fontsize=14, fontweight='bold', color=color, pad=15)
-            ax.set_facecolor('#1e1e1e')
-            ax.grid(True, linestyle='--', alpha=0.1)
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.set_xlabel("Training Step", alpha=0.7)
-            if title == "TACTICAL QUALITY":
-                ax.set_ylabel("Reward Value", alpha=0.7)
-            
-            # Add a subtle glow effect
-            ax.fill_between(range(window-1, len(raw_values)), smooth_values, alpha=0.05, color=color)
+            ax.plot(range(window - 1, len(raw_values)), smooth_values,
+                    color=color, linewidth=3, label='Trend')
+            ax.fill_between(range(window - 1, len(raw_values)), smooth_values,
+                            alpha=0.08, color=color)
+        else:
+            ax.text(0.5, 0.5, 'No data logged', transform=ax.transAxes,
+                    ha='center', va='center', color='#888888', fontsize=12)
+
+        ax.set_title(title, fontsize=13, fontweight='bold', color=color, pad=12)
+        ax.set_facecolor('#1e1e1e')
+        ax.grid(True, linestyle='--', alpha=0.15)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.set_xlabel("Training Step", alpha=0.7)
+        ax.set_ylabel("Reward Value", alpha=0.7)
 
     plt.tight_layout()
-    plt.savefig(f"{args.output_dir}/reward_curves.png", dpi=150, bbox_inches='tight', facecolor='#121212')
+    plt.savefig(f"{args.output_dir}/reward_curves.png", dpi=150,
+                bbox_inches='tight', facecolor='#121212')
     print(f"Premium Dashboard saved to {args.output_dir}/reward_curves.png")
     print("Done.")
 
