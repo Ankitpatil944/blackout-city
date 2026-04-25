@@ -545,21 +545,41 @@ def main():
         report_to="none",
     )
 
-    trainer = GRPOTrainer(
-        model=model,
-        processing_class=tokenizer,
-        reward_funcs=[
-            format_reward_func,
-            alignment_reward_func,
-            action_quality_reward_func,
-            constraint_reward_func,
-            failure_context_reward_func,
-        ],
-        reward_weights=[0.2, 0.2, 0.2, 0.2, 0.2],
-        args=training_args,
-        train_dataset=dataset,
-        callbacks=[RichGRPOCallback(log_every=5)],
-    )
+    _reward_fns = [
+        format_reward_func,
+        alignment_reward_func,
+        action_quality_reward_func,
+        constraint_reward_func,
+        failure_context_reward_func,
+    ]
+    _reward_w = [0.2, 0.2, 0.2, 0.2, 0.2]
+
+    def combined_reward_func(completions, **kwargs):
+        import torch as _torch
+        scores = [_torch.tensor(fn(completions, **kwargs)) for fn in _reward_fns]
+        return sum(w * s for w, s in zip(_reward_w, scores)).tolist()
+
+    try:
+        trainer = GRPOTrainer(
+            model=model,
+            processing_class=tokenizer,
+            reward_funcs=_reward_fns,
+            reward_weights=_reward_w,
+            args=training_args,
+            train_dataset=dataset,
+            callbacks=[RichGRPOCallback(log_every=5)],
+        )
+    except TypeError:
+        # Older TRL/Unsloth versions don't support reward_weights parameter.
+        # Fall back to a single combined reward function with weights baked in.
+        trainer = GRPOTrainer(
+            model=model,
+            processing_class=tokenizer,
+            reward_funcs=[combined_reward_func],
+            args=training_args,
+            train_dataset=dataset,
+            callbacks=[RichGRPOCallback(log_every=5)],
+        )
 
     # Final dtype guard — must run immediately before train() because
     # load_adapter / set_adapter can re-initialize LoRA B matrices to float32
