@@ -418,7 +418,7 @@ def main():
     )
 
     # PEFT 0.14.0 bug workaround
-    model.warnings_issued = set()
+    model.warnings_issued = {}
 
     model = FastLanguageModel.get_peft_model(
         model,
