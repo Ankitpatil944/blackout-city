@@ -51,7 +51,7 @@ def observation_to_prompt(observation, failed_actions: list[dict] | None = None)
     return json.dumps(data, separators=(",", ":"))
 
 
-def build_dataset(output_path: str = "dataset.jsonl", episodes_per_task: int = 2) -> Path:
+def build_dataset(output_path: str = "dataset.jsonl", episodes_per_task: int = 5) -> Path:
     path = Path(output_path)
     with path.open("w", encoding="utf-8") as handle:
         for task_id in TASK_ORDER:

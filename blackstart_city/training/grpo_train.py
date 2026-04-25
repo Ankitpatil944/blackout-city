@@ -141,7 +141,7 @@ def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
     rewards = []
     for prompt, comp in zip(prompts, completions):
         try:
-            prompt_text = prompt[0]["content"] if isinstance(prompt, list) else prompt
+            prompt_text = prompt[-1]["content"] if isinstance(prompt, list) else prompt
             obs_json_str = prompt_text.split("Observation:\n")[-1]
             obs = json.loads(obs_json_str)
             comp_text = comp[0]["content"] if isinstance(comp, list) else comp
@@ -201,7 +201,7 @@ def action_quality_reward_func(prompts, completions, **kwargs) -> list[float]:
     rewards = []
     for prompt, comp in zip(prompts, completions):
         try:
-            prompt_text = prompt[0]["content"] if isinstance(prompt, list) else prompt
+            prompt_text = prompt[-1]["content"] if isinstance(prompt, list) else prompt
             obs_json_str = prompt_text.split("Observation:\n")[-1]
             obs_data = json.loads(obs_json_str)
             comp_text = comp[0]["content"] if isinstance(comp, list) else comp
@@ -254,7 +254,7 @@ def constraint_reward_func(prompts, completions, **kwargs) -> list[float]:
     rewards = []
     for prompt, comp in zip(prompts, completions):
         try:
-            prompt_text = prompt[0]["content"] if isinstance(prompt, list) else prompt
+            prompt_text = prompt[-1]["content"] if isinstance(prompt, list) else prompt
             obs_json_str = prompt_text.split("Observation:\n")[-1]
             obs_data = json.loads(obs_json_str)
             comp_text = comp[0]["content"] if isinstance(comp, list) else comp
@@ -345,7 +345,7 @@ def failure_context_reward_func(prompts, completions, **kwargs) -> list[float]:
     rewards = []
     for prompt, comp in zip(prompts, completions):
         try:
-            prompt_text = prompt[0]["content"] if isinstance(prompt, list) else prompt
+            prompt_text = prompt[-1]["content"] if isinstance(prompt, list) else prompt
             obs_json_str = prompt_text.split("Observation:\n")[-1]
             obs_data = json.loads(obs_json_str)
             comp_text = comp[0]["content"] if isinstance(comp, list) else comp
@@ -446,6 +446,7 @@ def main():
         per_device_train_batch_size=1,
         gradient_accumulation_steps=2,
         num_generations=4,                   # reduced from 8 to prevent Colab OOM
+        generation_batch_size=4,             # must be a multiple of num_generations for TRL
         max_prompt_length=3500,              # increased to fit full JSON observation
         max_completion_length=150,
         temperature=0.9,
