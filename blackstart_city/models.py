@@ -11,15 +11,27 @@ try:
     from openenv.core.env_server.types import State as OpenEnvState
 except ImportError:  # pragma: no cover
     class OpenEnvAction(BaseModel):
-        model_config = ConfigDict(extra="forbid")
+        model_config = ConfigDict(
+            extra="forbid",
+            arbitrary_types_allowed=True,
+            revalidate_instances="never"
+        )
 
     class OpenEnvObservation(BaseModel):
         reward: float = 0.0
         done: bool = False
-        model_config = ConfigDict(extra="forbid")
+        model_config = ConfigDict(
+            extra="forbid",
+            arbitrary_types_allowed=True,
+            revalidate_instances="never"
+        )
 
     class OpenEnvState(BaseModel):
-        model_config = ConfigDict(extra="forbid")
+        model_config = ConfigDict(
+            extra="forbid",
+            arbitrary_types_allowed=True,
+            revalidate_instances="never"
+        )
 
 
 class DifficultyLevel(str, Enum):
@@ -65,7 +77,11 @@ class GeneratorState(BaseModel):
     current_output_mw: int = Field(default=0, ge=0)
     startup_steps_remaining: int = Field(default=0, ge=0)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class SubstationState(BaseModel):
@@ -75,7 +91,11 @@ class SubstationState(BaseModel):
     load_mw: int = Field(default=0, ge=0)
     damaged: bool = False
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class LineState(BaseModel):
@@ -89,7 +109,11 @@ class LineState(BaseModel):
     inspected: bool = False
     current_flow_mw: int = Field(default=0, ge=0)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class CriticalNodeState(BaseModel):
@@ -101,7 +125,11 @@ class CriticalNodeState(BaseModel):
     backup_minutes_remaining: int = Field(default=0, ge=0)
     population_impact: int = Field(default=0, ge=0)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class ZonePriority(str, Enum):
@@ -117,7 +145,11 @@ class ZoneState(BaseModel):
     demand_mw: int = Field(ge=1)
     restored_pct: int = Field(default=0, ge=0, le=100)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class StatusUpdate(BaseModel):
@@ -126,7 +158,11 @@ class StatusUpdate(BaseModel):
     next_action: str = Field(..., min_length=12, max_length=240)
     owner: str = Field(..., min_length=3, max_length=80)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class CommandRole(str, Enum):
@@ -143,7 +179,11 @@ class CoordinationMessage(BaseModel):
     urgency: str = Field(..., min_length=3, max_length=24)
     is_conflict: bool = Field(default=False)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class RewardBreakdown(BaseModel):
@@ -157,7 +197,11 @@ class RewardBreakdown(BaseModel):
     catastrophe_penalty: float = 0.0
     current_score: float = 0.01
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class CityTaskSpec(BaseModel):
@@ -166,7 +210,11 @@ class CityTaskSpec(BaseModel):
     description: str
     max_steps: int
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 # ── Instruction-following constraints ────────────────────────────────────────
@@ -195,7 +243,11 @@ class Constraint(BaseModel):
     must_restore_first: Optional[str] = None   # critical_node id
     before_restoring: Optional[str] = None     # zone id or critical_node id
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 # ── Live news feed ────────────────────────────────────────────────────────────
@@ -214,7 +266,11 @@ class NewsEvent(BaseModel):
     activates_constraint_id: Optional[str] = None
     public_trust_delta: float = Field(default=0.0, ge=-1.0, le=1.0)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 # ── Multi-dimensional rubric score ────────────────────────────────────────────
@@ -226,7 +282,11 @@ class RubricScore(BaseModel):
     resource_efficiency: float = Field(default=0.0, ge=0.0, le=1.0)  # Step efficiency, crew use
     overall: float = Field(default=0.0, ge=0.0, le=1.0)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class Scenario(BaseModel):
@@ -249,7 +309,11 @@ class Scenario(BaseModel):
     constraints: list[Constraint] = Field(default_factory=list)
     news_events: list[NewsEvent] = Field(default_factory=list)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class BlackstartAction(OpenEnvAction):
@@ -259,7 +323,11 @@ class BlackstartAction(OpenEnvAction):
     rationale: Optional[str] = Field(default=None, max_length=240)
     status_update: Optional[StatusUpdate] = None
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
     @model_validator(mode="after")
     def validate_payload(self) -> "BlackstartAction":
@@ -293,7 +361,11 @@ class ResourceState(BaseModel):
     telecom_support_units_available: int = Field(default=0, ge=0)
     dispatch_pressure: float = Field(default=0.0, ge=0.0, le=1.0)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class CommandRecommendation(BaseModel):
@@ -303,7 +375,11 @@ class CommandRecommendation(BaseModel):
     urgency: str = Field(..., min_length=3, max_length=24)
     proposed_action: Optional[BlackstartAction] = None
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class CommandCenterState(BaseModel):
@@ -316,7 +392,11 @@ class CommandCenterState(BaseModel):
     coordination_messages: list[CoordinationMessage] = Field(default_factory=list)
     rl_proposed_action: Optional[BlackstartAction] = None
 
-    model_config = ConfigDict(extra="forbid")
+        model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class BlackstartObservation(OpenEnvObservation):
@@ -347,7 +427,11 @@ class BlackstartObservation(OpenEnvObservation):
     command_center: CommandCenterState = Field(default_factory=CommandCenterState)
     rubric: RubricScore = Field(default_factory=RubricScore)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
 
 
 class BlackstartState(OpenEnvState):
@@ -388,4 +472,8 @@ class BlackstartState(OpenEnvState):
     infeasible_emergency_streak: int = 0
     emergency_priority_active: bool = False
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        arbitrary_types_allowed=True,
+        revalidate_instances="never"
+    )
