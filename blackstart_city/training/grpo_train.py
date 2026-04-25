@@ -444,11 +444,11 @@ def main():
         logging_steps=5,
         max_steps=args.max_steps,
         per_device_train_batch_size=1,
-        gradient_accumulation_steps=2,      # faster updates
-        num_generations=8,                   # more samples = more chance of valid JSON
-        max_prompt_length=1500,
+        gradient_accumulation_steps=2,
+        num_generations=4,                   # reduced from 8 to prevent Colab OOM
+        max_prompt_length=3500,              # increased to fit full JSON observation
         max_completion_length=150,
-        temperature=0.9,                     # diversity to escape cold start
+        temperature=0.9,
         bf16=is_bfloat16_supported(),
         fp16=not is_bfloat16_supported(),
         optim="adamw_8bit",
