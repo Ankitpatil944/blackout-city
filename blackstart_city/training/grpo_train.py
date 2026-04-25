@@ -507,11 +507,14 @@ def main():
             autocast_adapter_dtype=False,
         )
         model.set_adapter("sft_init")
-        # Unsloth Qwen kernels expect LoRA weights in compute dtype. Some PEFT
-        # loads keep them in float32, which crashes with Half activations.
-        for name, param in model.named_parameters():
-            if "lora_" in name and param.dtype != torch.float16:
-                param.data = param.data.to(torch.float16)
+
+    # Unsloth Qwen kernels require ALL LoRA params (both freshly initialized
+    # and loaded from SFT) to be in the compute dtype (fp16). Cast unconditionally
+    # here so GRPO never hits a Half/Float mismatch during forward.
+    compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    for name, param in model.named_parameters():
+        if "lora_" in name and param.dtype != compute_dtype:
+            param.data = param.data.to(compute_dtype)
 
     dataset = load_dataset("json", data_files=args.dataset, split="train")
 
