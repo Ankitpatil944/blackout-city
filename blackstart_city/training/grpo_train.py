@@ -586,22 +586,28 @@ def main():
             callbacks=[RichGRPOCallback(log_every=5)],
         )
 
-    # Final dtype guard — must run immediately before train() because
-    # load_adapter / set_adapter can re-initialize LoRA B matrices to float32
-    # even after an earlier cast. Unsloth's fast_lora kernel requires A/B to
-    # match the activation dtype (fp16 or bf16) or addmm_ will raise.
+    # Final dtype guard — must run immediately before train().
+    # GRPOTrainer creates an internal ref_model (frozen copy) during __init__.
+    # That copy is NOT the same Python object as `model`, so iterating
+    # model.named_parameters() does not fix ref_model's float32 LoRA tensors.
+    # We must cast BOTH model and trainer.ref_model here.
     _compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     _cast_count = 0
-    for _name, _param in model.named_parameters():
-        # Unsloth internal adapter tensors are not consistently named with "lora_".
-        # Cast every trainable floating tensor to compute dtype to avoid backward
-        # addmm dtype mismatches in fast_lora kernels.
-        if _param.requires_grad and _param.is_floating_point() and _param.dtype != _compute_dtype:
-            _param.data = _param.data.to(_compute_dtype)
-            _cast_count += 1
+
+    def _cast_all_lora(m):
+        nonlocal _cast_count
+        for _n, _p in m.named_parameters():
+            if _p.is_floating_point() and _p.dtype != _compute_dtype:
+                _p.data = _p.data.to(_compute_dtype)
+                _cast_count += 1
+
+    _cast_all_lora(model)
+    if hasattr(trainer, "ref_model") and trainer.ref_model is not None:
+        _cast_all_lora(trainer.ref_model)
+
     if _cast_count:
         console.print(
-            f"[yellow]Cast {_cast_count} trainable tensors → {_compute_dtype} before training[/]"
+            f"[yellow]Cast {_cast_count} tensors → {_compute_dtype} (model + ref_model)[/]"
         )
 
     console.print(Panel(
