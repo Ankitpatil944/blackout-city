@@ -417,6 +417,9 @@ def main():
         gpu_memory_utilization=0.6,
     )
 
+    # PEFT 0.14.0 bug workaround
+    model.warnings_issued = set()
+
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
