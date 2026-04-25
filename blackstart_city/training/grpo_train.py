@@ -485,18 +485,22 @@ def main():
     # PEFT 0.14.0 bug workaround
     model.warnings_issued = {}
 
+    # Always initialize LoRA wrappers via Unsloth first; Qwen fast-path kernels
+    # expect these wrappers (e.g. apply_qkv) to exist during GRPO rollout.
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=16,
+        target_modules=["q_proj","k_proj","v_proj","o_proj",
+                        "gate_proj","up_proj","down_proj"],
+        lora_alpha=16,
+        use_gradient_checkpointing="unsloth",
+        random_state=3407,
+    )
+
     if adapter_path:
-        model.load_adapter(adapter_path, adapter_name="default", is_trainable=True)
-    else:
-        model = FastLanguageModel.get_peft_model(
-            model,
-            r=16,
-            target_modules=["q_proj","k_proj","v_proj","o_proj",
-                            "gate_proj","up_proj","down_proj"],
-            lora_alpha=16,
-            use_gradient_checkpointing="unsloth",
-            random_state=3407,
-        )
+        # Load SFT adapter weights as the active trainable adapter for GRPO init.
+        model.load_adapter(adapter_path, adapter_name="sft_init", is_trainable=True)
+        model.set_adapter("sft_init")
 
     dataset = load_dataset("json", data_files=args.dataset, split="train")
 
