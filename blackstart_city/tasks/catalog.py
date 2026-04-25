@@ -5,7 +5,7 @@ import random
 from blackstart_city.models import CityTaskSpec, DifficultyLevel, Scenario
 from blackstart_city.tasks.scenarios import SCENARIO_FAMILIES
 
-TASK_ORDER = ["local_blackstart", "island_rejoin", "city_cascade_recovery"]
+TASK_ORDER = ["local_blackstart", "island_rejoin", "city_cascade_recovery", "mega_cascade"]
 
 TASK_SPECS = {
     "local_blackstart": CityTaskSpec(
@@ -25,6 +25,15 @@ TASK_SPECS = {
         difficulty=DifficultyLevel.HARD,
         description="Recover the city while critical services degrade and unsafe reconnection can cause a second blackout.",
         max_steps=26,
+    ),
+    "mega_cascade": CityTaskSpec(
+        task_id="mega_cascade",
+        difficulty=DifficultyLevel.HARD,
+        description=(
+            "Extreme: two hospitals share one substation, conflicting council orders, "
+            "8-minute backup start, school-zone downed line forbidden."
+        ),
+        max_steps=35,
     ),
 }
 

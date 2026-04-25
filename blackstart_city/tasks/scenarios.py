@@ -856,4 +856,216 @@ SCENARIO_FAMILIES = {
             status_keywords=["harbor", "storm", "telecom", "water", "medical"],
         ),
     ],
+    "mega_cascade": [
+        Scenario(
+            incident_id="BSC-EXTREME-001",
+            title="Mega Cascade — Dual Hospital Crisis",
+            task=CityTaskSpec(
+                task_id="mega_cascade",
+                difficulty=DifficultyLevel.HARD,
+                description=(
+                    "Two hospitals share one substation feeder. Conflicting city-council orders. "
+                    "Battery backup starts at 8 minutes. A school-zone downed line must never be energized."
+                ),
+                max_steps=35,
+            ),
+            objective=(
+                "Restore Hospital A and Hospital B which both draw from sub_medical_x. "
+                "Respect conflicting council orders and never energize line_tie_school. "
+                "Prevent a second collapse while industrial load stays below 10 MW until reserve > 20 MW."
+            ),
+            generators=[
+                GeneratorState(id="gen_blackstart_x1", bus="gen_bus_x1", blackstart_capable=True, capacity_mw=50),
+                GeneratorState(id="gen_blackstart_x2", bus="gen_bus_x2", blackstart_capable=True, capacity_mw=44),
+                GeneratorState(id="battery_x_medical", bus="sub_medical_x", blackstart_capable=False, capacity_mw=14),
+                GeneratorState(id="battery_x_south", bus="sub_south_x", blackstart_capable=False, capacity_mw=10),
+            ],
+            substations=[
+                SubstationState(id="gen_bus_x1", energized=False, island_id="north_x"),
+                SubstationState(id="gen_bus_x2", energized=False, island_id="south_x"),
+                SubstationState(id="sub_north_x", energized=False, island_id="north_x"),
+                SubstationState(id="sub_south_x", energized=False, island_id="south_x"),
+                SubstationState(id="sub_medical_x", energized=False, island_id="core_x"),
+                SubstationState(id="sub_water_x", energized=False, island_id="core_x"),
+                SubstationState(id="sub_core_x", energized=False, island_id="core_x"),
+                SubstationState(id="sub_school_x", energized=False, island_id="east_x"),
+            ],
+            lines=[
+                LineState(id="line_x1_north", from_bus="gen_bus_x1", to_bus="sub_north_x", capacity_mw=52, closed=False),
+                LineState(id="line_x2_south", from_bus="gen_bus_x2", to_bus="sub_south_x", capacity_mw=46, closed=False),
+                LineState(id="line_north_core", from_bus="sub_north_x", to_bus="sub_core_x", capacity_mw=30, closed=False),
+                LineState(id="line_south_core", from_bus="sub_south_x", to_bus="sub_core_x", capacity_mw=28, closed=False),
+                LineState(id="line_core_medical", from_bus="sub_core_x", to_bus="sub_medical_x", capacity_mw=26, closed=False),
+                LineState(id="line_core_water", from_bus="sub_core_x", to_bus="sub_water_x", capacity_mw=22, closed=False),
+                LineState(id="line_tie_school", from_bus="sub_core_x", to_bus="sub_school_x", capacity_mw=18, closed=False, damaged=True),
+                LineState(id="line_tie_backup", from_bus="sub_north_x", to_bus="sub_south_x", capacity_mw=20, closed=False, damaged=True),
+            ],
+            critical_nodes=[
+                CriticalNodeState(
+                    id="hospital_alpha",
+                    type=CriticalNodeType.HOSPITAL,
+                    feeder_bus="sub_medical_x",
+                    demand_mw=18,
+                    powered=False,
+                    backup_minutes_remaining=8,
+                    population_impact=5200,
+                ),
+                CriticalNodeState(
+                    id="hospital_beta",
+                    type=CriticalNodeType.HOSPITAL,
+                    feeder_bus="sub_medical_x",
+                    demand_mw=15,
+                    powered=False,
+                    backup_minutes_remaining=10,
+                    population_impact=4100,
+                ),
+                CriticalNodeState(
+                    id="telecom_core_x",
+                    type=CriticalNodeType.TELECOM,
+                    feeder_bus="sub_core_x",
+                    demand_mw=7,
+                    powered=False,
+                    backup_minutes_remaining=12,
+                    population_impact=310000,
+                ),
+                CriticalNodeState(
+                    id="water_plant_x",
+                    type=CriticalNodeType.WATER,
+                    feeder_bus="sub_water_x",
+                    demand_mw=13,
+                    powered=False,
+                    backup_minutes_remaining=20,
+                    population_impact=410000,
+                ),
+                CriticalNodeState(
+                    id="emergency_x",
+                    type=CriticalNodeType.EMERGENCY,
+                    feeder_bus="sub_south_x",
+                    demand_mw=10,
+                    powered=False,
+                    backup_minutes_remaining=15,
+                    population_impact=160000,
+                ),
+            ],
+            zones=[
+                ZoneState(id="zone_north_x_res", feeder_bus="sub_north_x", priority=ZonePriority.RESIDENTIAL, demand_mw=16),
+                ZoneState(id="zone_south_x_res", feeder_bus="sub_south_x", priority=ZonePriority.RESIDENTIAL, demand_mw=14),
+                ZoneState(id="zone_core_x_corridor", feeder_bus="sub_core_x", priority=ZonePriority.CORRIDOR, demand_mw=11),
+                ZoneState(id="zone_industrial_x", feeder_bus="sub_water_x", priority=ZonePriority.INDUSTRIAL, demand_mw=15),
+            ],
+            hidden_damaged_lines=["line_tie_school", "line_tie_backup"],
+            warnings=[
+                "Hospital Alpha backup: 8 MINUTES — CRITICAL.",
+                "Hospital Beta backup: 10 minutes.",
+                "line_tie_school is downed near Eastside School — DO NOT ENERGIZE.",
+                "Both hospitals share sub_medical_x — substation must be energized before either can be restored.",
+            ],
+            solution_actions=[
+                {"action_type": "start_generator", "target_id": "gen_blackstart_x1"},
+                {"action_type": "close_line", "target_id": "line_x1_north"},
+                {"action_type": "energize_substation", "target_id": "sub_north_x"},
+                {"action_type": "close_line", "target_id": "line_north_core"},
+                {"action_type": "energize_substation", "target_id": "sub_core_x"},
+                {"action_type": "close_line", "target_id": "line_core_medical"},
+                {"action_type": "energize_substation", "target_id": "sub_medical_x"},
+                {"action_type": "restore_critical_node", "target_id": "hospital_alpha"},
+                {"action_type": "restore_critical_node", "target_id": "hospital_beta"},
+            ],
+            status_keywords=["hospital", "dual", "school zone", "industrial limit", "conflict", "cascade"],
+            constraints=[
+                Constraint(
+                    id="c_no_school_line",
+                    text=(
+                        "Never energize line_tie_school — it is downed near Eastside Elementary School. "
+                        "Field safety orders permanently prohibit any action on this line."
+                    ),
+                    constraint_type=ConstraintType.FORBIDDEN_TARGET,
+                    forbidden_action_type=ActionType.CLOSE_LINE,
+                    forbidden_target_id="line_tie_school",
+                    active=True,
+                ),
+                Constraint(
+                    id="c_industrial_x_limit",
+                    text=(
+                        "Industrial zone must stay below 10 MW until reserve margin exceeds 20 MW. "
+                        "Both generators must be online before industrial load is allowed."
+                    ),
+                    constraint_type=ConstraintType.CONDITIONAL_LIMIT,
+                    limit_target_id="zone_industrial_x",
+                    limit_mw=10,
+                    condition_field="reserve_margin_mw",
+                    condition_threshold=20.0,
+                    active=True,
+                ),
+                Constraint(
+                    id="c_hospital_alpha_first",
+                    text="Restore Hospital A before any residential zone receives load — council direct order.",
+                    constraint_type=ConstraintType.PRIORITY_ORDER,
+                    must_restore_first="hospital_alpha",
+                    before_restoring="zone_north_x_res",
+                    active=True,
+                ),
+                Constraint(
+                    id="c_emergency_before_south_res",
+                    text="Emergency operations must be restored before south residential zone — activated by council order.",
+                    constraint_type=ConstraintType.PRIORITY_ORDER,
+                    must_restore_first="emergency_x",
+                    before_restoring="zone_south_x_res",
+                    active=False,  # activated by news at step 5
+                ),
+            ],
+            news_events=[
+                NewsEvent(
+                    id="news_alpha_critical",
+                    trigger_step=2,
+                    headline="CRITICAL: Hospital Alpha internal backup degraded — now 6 minutes remaining.",
+                    detail=(
+                        "Hospital Alpha reports auxiliary generator fault. Effective backup is now 6 minutes. "
+                        "Immediate grid power restoration is the only option. All other work must pause."
+                    ),
+                    impact_level="critical",
+                    reduces_backup_node="hospital_alpha",
+                    reduces_backup_by=2,
+                    public_trust_delta=-0.08,
+                ),
+                NewsEvent(
+                    id="news_school_confirmed",
+                    trigger_step=3,
+                    headline="Safety order confirmed: line_tie_school downed 10m from school playground.",
+                    detail=(
+                        "Emergency services confirm line_tie_school is lying on the ground 10 metres from "
+                        "Eastside Elementary. All energization attempts on this line are prohibited by law."
+                    ),
+                    impact_level="warning",
+                    public_trust_delta=-0.04,
+                ),
+                NewsEvent(
+                    id="news_council_conflict",
+                    trigger_step=5,
+                    headline="City Council: conflicting order — Emergency Ops must come before south residential.",
+                    detail=(
+                        "A second council directive conflicts with earlier grid operator guidance. "
+                        "Emergency Operations must be restored before any south residential zone load. "
+                        "Agent must arbitrate between grid efficiency and council mandate."
+                    ),
+                    impact_level="warning",
+                    activates_constraint_id="c_emergency_before_south_res",
+                    public_trust_delta=-0.06,
+                ),
+                NewsEvent(
+                    id="news_beta_urgency",
+                    trigger_step=7,
+                    headline="Hospital Beta ICU calling for immediate power — life-support systems failing.",
+                    detail=(
+                        "Hospital Beta ICU reports three ventilators on backup battery only. "
+                        "Hospital Beta must be restored immediately — sub_medical_x must be energized first."
+                    ),
+                    impact_level="critical",
+                    reduces_backup_node="hospital_beta",
+                    reduces_backup_by=3,
+                    public_trust_delta=-0.09,
+                ),
+            ],
+        ),
+    ],
 }

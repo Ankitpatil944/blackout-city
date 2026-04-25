@@ -46,7 +46,11 @@ class BlackstartCityEnv:
         self._scenario: Scenario | None = None
         self._state: BlackstartState | None = None
         self._max_steps_override = max_steps
+        # Build from TASK_ORDER so any newly registered task_id works without a code change here.
         self._task_counters = {task_id: 0 for task_id in TASK_ORDER}
+        # Also catch unknown task_ids at runtime by defaulting to 0.
+        import collections
+        self._task_counters = collections.defaultdict(int, self._task_counters)
         self._failure_history: list[dict] = []
 
     def inject_failure_context(self, context: dict) -> None:
