@@ -392,7 +392,7 @@ class CommandCenterState(BaseModel):
     coordination_messages: list[CoordinationMessage] = Field(default_factory=list)
     rl_proposed_action: Optional[BlackstartAction] = None
 
-        model_config = ConfigDict(
+    model_config = ConfigDict(
         extra="forbid",
         arbitrary_types_allowed=True,
         revalidate_instances="never"
