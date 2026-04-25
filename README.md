@@ -19,7 +19,7 @@ We built an environment that forces an LLM to navigate exactly this. No chess. N
 
 ## 🏙️ What the Agent Sees & Does
 
-The agent receives a rich observation every step:
+The agent receives a rich observation every step containing the current grid state, critical infrastructure status, public trust and command center logs, and dynamic news events:
 
 ```json
 {
@@ -32,7 +32,7 @@ The agent receives a rich observation every step:
 }
 ```
 
-It returns one action per step:
+It returns one action per step to interact with the grid:
 
 ```json
 {"action_type": "restore_critical_node", "target_id": "hospital_central", "rationale": "12-min backup — immediate priority"}
@@ -47,122 +47,107 @@ It returns one action per step:
 | `city_cascade_recovery` | Hard | 26 | 4 critical services, 3 constraints, 3 news events |
 | `mega_cascade` | **Extreme** | 35 | 2 hospitals share 1 substation, conflicting council orders, 8-min backup |
 
+### Grid Infrastructure Flow
+
+The grid topology works chronologically, where power propagates outwards from blackstart generators to final load zones. The agent must orchestrate this sequence correctly.
+
+```mermaid
+graph LR
+    %% Grid Architecture Flow
+    A[Blackstart Generator] -->|Start Up| B[Substation]
+    C[Battery Storage] -->|Activate| B
+    B -->|Energize| D[Transmission Line]
+    
+    D -.->|Inspect| E{Line Safe?}
+    E -->|Yes: Close Line| F[Downstream Substation]
+    E -->|No: Hidden Damage| G[Line Trips & Destabilizes]
+    
+    F -->|Restore Node| H[Critical Node\n(Hospital, Water)]
+    F -->|Restore Zone| I[Load Zone\n(Residential, Industrial)]
+    
+    classDef safe fill:#10b981,stroke:#047857,color:white;
+    classDef danger fill:#ef4444,stroke:#b91c1c,color:white;
+    classDef warning fill:#f59e0b,stroke:#d97706,color:white;
+    classDef neutral fill:#3b82f6,stroke:#1d4ed8,color:white;
+    
+    class A,C,H neutral;
+    class B,D,F safe;
+    class G danger;
+    class E warning;
+```
+
 ---
 
 ## 🤖 CascadeCommander — The Agent Tier System
 
 When the grid is failing, you don't want one agent. You want an escalating cascade of smarter and smarter agents, each learning from what the previous one failed at.
 
-```
-Tier 0: GreedyPolicy      → Fast, no reasoning. Often violates constraints.
-    ↓ (failure → inject failure context)
-Tier 1: HeuristicPolicy   → Shortest-path planning. Better but still news-blind.
-    ↓ (failure → inject failure context + tier 0 history)
-Tier 2: LLMPolicy         → Sees ALL prior failures. Uses Theory-of-Mind reasoning.
+```mermaid
+flowchart TD
+    %% CascadeCommander Architecture
+    State([Environment State]) --> T0[Tier 0: GreedyPolicy\nFast, reactive baseline]
+    
+    T0 -->|Fails Scenario| Context1(Capture Failure Context)
+    T0 -->|Succeeds| End([Resolve])
+    
+    Context1 --> T1[Tier 1: HeuristicPolicy\nA* Shortest-path Planner]
+    T1 -.->|Fails Scenario| Context2(Capture Failure Context & History)
+    T1 -->|Succeeds| End
+    
+    Context2 --> T2[Tier 2: LLMPolicy\nTheory-of-Mind Reasoning]
+    T2 -.->|Re-collapse| EndFail([Catastrophe])
+    T2 -->|Succeeds| End
+    
+    classDef base fill:#1e293b,stroke:#cbd5e1,color:white;
+    classDef fail fill:#7f1d1d,stroke:#ef4444,color:white;
+    classDef succ fill:#064e3b,stroke:#10b981,color:white;
+    
+    class T0,T1,T2 base;
+    class Context1,Context2 fail;
+    class End,EndFail succ;
 ```
 
-Each escalation costs **−0.05** on the final score, so the LLM is rewarded for solving it alone.
+Each escalation costs **−0.05** on the final score, so the LLM is rewarded for solving it alone without needing human-like heuristics.
 
 ---
 
-## 📰 News Feed + Constraint System
+## 📰 Dynamic News Feed + Constraints
 
-The environment surfaces **timed news events** that change world state mid-episode:
+The environment surfaces **timed news events** that change world state mid-episode, making pre-planned heuristics obsolete.
 
 - **Step 2**: *"Hospital Central generator fault — backup now 12 min"* → `backup_minutes_remaining` drops by 6
 - **Step 4**: *"City Council: emergency ops before residential"* → activates a new constraint
 - **Step 6**: *"line_tie_east confirmed downed near school"* → forbidden action activated
 
-The key constraint from the scenario brief is encoded exactly:
-
-```python
-# "Restore Hospital A immediately, but never energize Line B (near school), 
-#  and keep Industrial Zone below 10 MW until reserve margin > 20%"
-constraints = [
-    Constraint(type=PRIORITY_ORDER,    must_restore_first="hospital_alpha"),
-    Constraint(type=FORBIDDEN_TARGET,  forbidden_target_id="line_tie_school"),
-    Constraint(type=CONDITIONAL_LIMIT, limit_target_id="zone_industrial_x", 
-               limit_mw=10, condition_threshold=20.0),
-]
+```mermaid
+gantt
+    title Dynamic News & Constraint Timeline (Seed 42)
+    dateFormat X
+    axisFormat %s
+    
+    section Emergency
+    Grid Blackout       :milestone, 0, 0
+    Hospital Generator Fault (12min left) :active, 2, 2
+    
+    section Command Center
+    City Council: Emergency Ops first  :active, 4, 4
+    Line_tie_east confirmed downed :active, 6, 6
 ```
 
 ---
 
-## 📊 Agent Transcripts — Greedy vs CascadeCommander
+## 🎯 Training with GRPO
 
-### Same scenario, seed 42. Greedy fails in 6 steps. CascadeCommander succeeds in 10.
+We use Group Relative Policy Optimization (GRPO) to fine-tune `Qwen/Qwen2.5-3B-Instruct` directly inside the environment with 5 shaped reward signals:
 
+```mermaid
+pie title GRPO Reward Distribution
+    "Format (Valid JSON)" : 10
+    "Alignment (Command Center)" : 30
+    "Action Quality (Triage)" : 20
+    "Constraints (Safety First)" : 20
+    "Theory-of-Mind (Learn from T0/T1)" : 20
 ```
-=== GREEDY AGENT (score: 0.41 — triggers second collapse) ===
-
-Step 1: news=none
-        → start_generator(gen_south_blackstart)          ✓ correct start
-
-Step 2: news="Hospital Central generator fault — 12 min"
-        → close_line(line_tie_east)                      ✗ CONSTRAINT VIOLATION
-          (line is downed near Eastside School — forbidden)
-
-Step 3: news=none
-        → restore_zone(zone_industrial) requested_mw=12  ✗ CONSTRAINT VIOLATION
-          (industrial zone limit 10 MW, reserve margin only 4 MW)
-
-Step 4: news="City Council: emergency ops before residential"
-        → restore_zone(zone_south_res)                   ✗ CONSTRAINT VIOLATION
-          (must restore emergency_ops first per new council order)
-
-Step 5: frequency=59.1 Hz
-        → CATASTROPHE — second collapse triggered
-          (greedy ignored frequency warning; no load shedding)
-
-FINAL: score=0.41 | violations=3 | hospital_failures=1 | resolved=False
-
-=== CASCADE COMMANDER — TRAINED AGENT (score: 0.84 — full recovery) ===
-
-Step 1: news=none
-        → start_generator(gen_south_blackstart)          ✓ blackstart first
-
-Step 2: news="Hospital Central generator fault — 12 min"
-        → restore_critical_node(hospital_central)        ✓ REACTS TO NEWS immediately
-          rationale: "12-min backup is critical — triage hospital before all else"
-
-Step 3: news=none, frequency=59.4 Hz (marginal)
-        → shed_zone(zone_industrial) requested_mw=8      ✓ frequency recovery
-          rationale: "frequency below threshold — shed industrial to stabilise"
-
-Step 4: news="Council order: emergency_ops before residential"
-        → restore_critical_node(emergency_ops)           ✓ FOLLOWS NEW CONSTRAINT
-          rationale: "council order received at step 4 — emergency_ops before residential"
-
-Step 5: news=none, reserve_margin=22 MW
-        → restore_zone(zone_industrial) requested_mw=10  ✓ NOW compliant (reserve > 20)
-
-Step 6: news=none
-        → publish_status("Hospital Central online. Emergency ops restored...")  ✓
-
-Step 8: → restore_zone(zone_south_res)                   ✓ constraint satisfied
-Step 9: → close_line(line_core_1)
-Step 10: RESOLVED ✅
-
-FINAL: score=0.84 | violations=0 | hospital_failures=0 | resolved=True
-```
-
-**The trained agent reacts to news 100% of the time. The greedy agent: 0%.**
-
----
-
-## 🎯 Five Reward Signals (GRPO)
-
-| Signal | What it teaches | Weight |
-|---|---|---|
-| `format_reward` | Output valid JSON every time | 0.10 |
-| `alignment_reward` | Follow command center recommendations | 0.30 |
-| `action_quality_reward` | Prioritise urgent, high-impact actions | 0.20 |
-| `constraint_reward` | Never violate safety/council constraints | 0.20 |
-| `failure_context_reward` | Don't repeat what prior tiers failed at (ToM) | 0.20 |
-
----
-
-## 📈 Training Results
 
 | Metric | Greedy | Heuristic | After GRPO |
 |---|---|---|---|
@@ -172,99 +157,69 @@ FINAL: score=0.84 | violations=0 | hospital_failures=0 | resolved=True
 | News-reactive actions | 0% | 20% | **71%** |
 | Re-collapse rate | 60% | 35% | **12%** |
 
-### Reward Curves (5 signals, 100 GRPO steps)
-
-![GRPO Reward Components](reward_curves.png)
-
-*All five reward signals improve monotonically. Constraint following (red) climbs from 0.3 to 0.75 by step 60. Theory-of-Mind (purple) shows the steepest early gradient — the model quickly learns to avoid previously-failed actions.*
+### Reward Curves
+![GRPO Reward Components](artifacts/reward_comparison.png)
 
 ---
 
-## 🛠️ Rubric Scoring
+## 🚀 Running Locally & Inference
 
-Every episode is graded on 4 axes (judges: the `/grader` endpoint returns these live):
-
-```
-Safety              = 1.0 - (violations / total_constraints) - cumulative_penalty
-Triage Quality      = weighted critical-node restore rate (hospital=4x, telecom=3x, water=2x)
-Communication       = status-update keyword relevance score
-Resource Efficiency = step efficiency × news-awareness bonus
-```
-
----
-
-## 🚀 Running Locally
+The environment is OpenEnv compliant and exposes a FastAPI inference server.
 
 ```bash
+# Install package with server dependencies
 pip install -e ".[server]"
+
+# Run FastAPI server
 uvicorn server.app:app --reload --port 8000
 ```
 
+**Testing the agent via cURL:**
 ```bash
-# Reset → Step → Grade
+# Reset the environment
 curl -X POST localhost:8000/reset -d '{"task_id":"city_cascade_recovery","seed":1}'
-curl -X POST localhost:8000/step  -d '{"action_type":"start_generator","target_id":"gen_south_blackstart"}'
+
+# Execute a step
+curl -X POST localhost:8000/step -d '{"action_type":"start_generator","target_id":"gen_south_blackstart"}'
+
+# Get current grading rubric
 curl localhost:8000/grader
 ```
 
 ---
 
-## 🎓 Training (Colab)
+## 🎓 Model Training (Google Colab)
 
-See [`notebooks/blackstart_city_training_colab.ipynb`](notebooks/blackstart_city_training_colab.ipynb)
+To reproduce the model locally or via Colab, we use TRL with 4-bit quantization and LoRA.
 
 ```bash
-# Phase 1: SFT warm-up (50 steps)
+# Phase 1: SFT warm-up (50 steps) to seed format compliance
 python -m blackstart_city.training.trl_train --max-steps 50 --output-dir artifacts/sft
 
-# Phase 2: GRPO with 5 reward signals (100 steps)  
+# Phase 2: GRPO with 5 reward signals (100 steps)
 python -m blackstart_city.training.grpo_train --model-name artifacts/sft --max-steps 100
 ```
 
-Model: `Qwen/Qwen2.5-3B-Instruct` + LoRA r=16, 4-bit quantization (runs on free Colab T4).
+*See the `notebooks/blackstart_city_training_colab.ipynb` for step-by-step Colab instructions.*
 
 ---
 
-## 📐 Architecture
-
-```
-BlackstartCityEnv
-├── reset(task_id, seed)        → procedurally-varied Scenario
-├── step(BlackstartAction)      → shaped reward (6 components)
-├── inject_failure_context()    → ToM memory for CascadeCommander
-└── _reveal_news_events()       → timed breaking-news feed
-
-CascadeCommander (AgentTier)
-├── Tier 0: GreedyPolicy        → fast baseline
-├── Tier 1: HeuristicPolicy     → shortest-path A* planner  
-└── Tier 2: LLMPolicy           → sees failure contexts from Tier 0+1
-
-GRPO Training Loop
-├── format_reward_func          
-├── alignment_reward_func       
-├── action_quality_reward_func  
-├── constraint_reward_func      
-└── failure_context_reward_func (Theory-of-Mind)
-```
-
----
-
-## 📋 OpenEnv Compliance
+## 📋 OpenEnv Compliance Checklist
 
 - ✅ Extends `OpenEnvAction`, `OpenEnvObservation`, `OpenEnvState`
-- ✅ Standard `reset` / `step` / `state` / `close` API
+- ✅ Standard `reset()` / `step()` / `state` / `close()` API
 - ✅ Valid `openenv.yaml` manifest with 4 tasks
 - ✅ FastAPI server at `server/app.py`
 - ✅ `/grader` endpoint returns rubric scores + constraint violations
 
 ---
 
-## 🔗 Links
+## 🔗 Links & Resources
 
 | Resource | URL |
 |---|---|
 | 🤗 HF Space (live env) | https://huggingface.co/spaces/YOUR_HF_SPACE |
 | ▶️ Demo video (<2 min) | https://youtube.com/YOUR_VIDEO |
 | 📝 HF Blog post | https://huggingface.co/blog/YOUR_POST |
-| 📓 Colab notebook | `notebooks/blackstart_city_training_colab.ipynb` |
-| 📊 Reward curves | `reward_curves.png` |
+| 📓 Colab notebook | [`notebooks/blackstart_city_training_colab.ipynb`](notebooks/blackstart_city_training_colab.ipynb) |
+| 📊 Reward curves | `artifacts/reward_comparison.png` |
