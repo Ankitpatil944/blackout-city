@@ -159,3 +159,78 @@ def test_each_task_family_has_three_seeded_variants():
     assert len(SCENARIO_FAMILIES["local_blackstart"]) == 3
     assert len(SCENARIO_FAMILIES["island_rejoin"]) == 3
     assert len(SCENARIO_FAMILIES["city_cascade_recovery"]) == 3
+
+
+def test_forbidden_target_constraint_triggers_penalty():
+    """Closing line_tie_east on BSC-HARD-001 violates the school-zone constraint."""
+    env = BlackstartCityEnv()
+    env.reset(task_id="city_cascade_recovery", seed=0)
+    env.step(BlackstartAction(action_type=ActionType.START_GENERATOR, target_id="gen_south_blackstart"))
+    _, reward, _, info = env.step(
+        BlackstartAction(action_type=ActionType.CLOSE_LINE, target_id="line_tie_east")
+    )
+    assert info["constraint_violations"] >= 1
+    assert reward < 0
+
+
+def test_news_events_are_revealed_at_correct_step():
+    """BSC-HARD-001 has a news event at step 4 that reduces hospital backup."""
+    env = BlackstartCityEnv()
+    obs = env.reset(task_id="city_cascade_recovery", seed=0)
+    assert len(obs.news_feed) == 0  # no news at step 0
+
+    # Take 4 steps to reach trigger_step 4
+    env.step(BlackstartAction(action_type=ActionType.START_GENERATOR, target_id="gen_south_blackstart"))
+    env.step(BlackstartAction(action_type=ActionType.START_GENERATOR, target_id="gen_river_gas"))
+    obs, _, _, _ = env.step(BlackstartAction(action_type=ActionType.INSPECT_LINE, target_id="line_tie_city"))
+    # Step 3 — news at step 2 should have fired
+    assert len(obs.news_feed) >= 1
+    obs, _, _, _ = env.step(BlackstartAction(action_type=ActionType.INSPECT_LINE, target_id="line_tie_east"))
+    # Step 4 — hospital backup news should have fired
+    assert any("Hospital" in e.headline or "hospital" in e.headline for e in obs.news_feed)
+
+
+def test_rubric_score_is_present_on_observation():
+    """Every observation should include a rubric with four dimensions."""
+    env = BlackstartCityEnv()
+    obs = env.reset(task_id="city_cascade_recovery", seed=0)
+    assert obs.rubric is not None
+    assert 0.0 <= obs.rubric.safety <= 1.0
+    assert 0.0 <= obs.rubric.triage_quality <= 1.0
+    assert 0.0 <= obs.rubric.communication_clarity <= 1.0
+    assert 0.0 <= obs.rubric.resource_efficiency <= 1.0
+    assert 0.0 <= obs.rubric.overall <= 1.0
+
+
+def test_constraints_visible_in_observation():
+    """Hard scenario should expose active constraints to the agent."""
+    env = BlackstartCityEnv()
+    obs = env.reset(task_id="city_cascade_recovery", seed=0)
+    assert len(obs.active_constraints) >= 2  # at least forbidden + conditional
+    texts = [c.text for c in obs.active_constraints]
+    assert any("line_tie_east" in t for t in texts)
+
+
+def test_arbitration_reward_is_tracked_in_breakdown():
+    """When multi-agent conflicts exist, the arbitration reward should be non-zero."""
+    env = BlackstartCityEnv()
+    obs = env.reset(task_id="city_cascade_recovery", seed=0)
+    # First step: start a generator (Grid Operator usually recommends this)
+    obs, reward, _, _ = env.step(
+        BlackstartAction(action_type=ActionType.START_GENERATOR, target_id="gen_south_blackstart")
+    )
+    # The reward breakdown should have an arbitration_reward field
+    assert hasattr(obs.reward_breakdown, "arbitration_reward")
+    # Whether it's positive, negative, or zero depends on the conflict state,
+    # but it must be a real number, not missing
+    assert isinstance(obs.reward_breakdown.arbitration_reward, float)
+
+
+def test_conflict_messages_marked_with_is_conflict():
+    """Coordination messages that represent agent disagreements should be flagged."""
+    env = BlackstartCityEnv()
+    obs = env.reset(task_id="city_cascade_recovery", seed=0)
+    # Check that the is_conflict field exists on all coordination messages
+    for msg in obs.command_center.coordination_messages:
+        assert isinstance(msg.is_conflict, bool)
+

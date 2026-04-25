@@ -47,3 +47,11 @@ tasks:
     max_steps: 26
     score_range: [0.01, 0.99]
     grader: blackstart_city.task_graders:CityCascadeRecoveryGrader
+  - id: mega_cascade
+    difficulty: extreme
+    description: >
+      Two hospitals compete for one substation. Conflicting council orders. 8-minute backup.
+      School-zone downed line must never be energized. Industrial zone capped until reserve > 20 MW.
+    max_steps: 35
+    score_range: [0.01, 0.99]
+    grader: blackstart_city.task_graders:CityCascadeRecoveryGrader
