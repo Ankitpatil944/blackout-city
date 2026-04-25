@@ -68,29 +68,29 @@ class BlackstartCityEnv:
         self._scenario = get_scenario(selected, seed=seed, episode_index=episode_index)
         max_steps = self._max_steps_override or self._scenario.task.max_steps
 
-        self._state = BlackstartState(
-            incident_id=self._scenario.incident_id,
-            task_id=self._scenario.task.task_id,
-            title=self._scenario.title,
-            difficulty=self._scenario.task.difficulty,
-            objective=self._scenario.objective,
-            step_count=0,
-            max_steps=max_steps,
-            done=False,
-            generators=[generator.model_dump() for generator in self._scenario.generators],
-            substations=[sub.model_dump() for sub in self._scenario.substations],
-            lines=[line.model_dump() for line in self._scenario.lines],
-            critical_nodes=[node.model_dump() for node in self._scenario.critical_nodes],
-            zones=[zone.model_dump() for zone in self._scenario.zones],
-            available_generation_mw=self._scenario.initial_available_generation_mw,
-            served_load_mw=self._scenario.initial_served_load_mw,
-            reserve_margin_mw=0,
-            frequency_hz=self._scenario.initial_frequency_hz,
-            unstable_islands=self._count_unstable_islands(),
-            failed_critical_nodes=[],
-            reward_breakdown=RewardBreakdown(current_score=0.01),
-            last_action_result="Blackout scenario initialized.",
-        )
+        self._state = BlackstartState.model_validate({
+            "incident_id": self._scenario.incident_id,
+            "task_id": self._scenario.task.task_id,
+            "title": self._scenario.title,
+            "difficulty": self._scenario.task.difficulty,
+            "objective": self._scenario.objective,
+            "step_count": 0,
+            "max_steps": max_steps,
+            "done": False,
+            "generators": [generator.model_dump() for generator in self._scenario.generators],
+            "substations": [sub.model_dump() for sub in self._scenario.substations],
+            "lines": [line.model_dump() for line in self._scenario.lines],
+            "critical_nodes": [node.model_dump() for node in self._scenario.critical_nodes],
+            "zones": [zone.model_dump() for zone in self._scenario.zones],
+            "available_generation_mw": self._scenario.initial_available_generation_mw,
+            "served_load_mw": self._scenario.initial_served_load_mw,
+            "reserve_margin_mw": 0,
+            "frequency_hz": self._scenario.initial_frequency_hz,
+            "unstable_islands": self._count_unstable_islands(),
+            "failed_critical_nodes": [],
+            "reward_breakdown": RewardBreakdown(current_score=0.01).model_dump(),
+            "last_action_result": "Blackout scenario initialized.",
+        })
         self._recompute_state()
         self._state.command_center = initial_command_center(self._state)
         self._state.active_constraints = [c.model_dump() for c in self._scenario.constraints]
