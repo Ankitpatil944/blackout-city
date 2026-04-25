@@ -141,11 +141,11 @@ def main():
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model_name,
-        max_seq_length=2048,
+        max_seq_length=4096,
         load_in_4bit=True,
         fast_inference=False,
         max_lora_rank=16,
-        gpu_memory_utilization=0.6,
+        gpu_memory_utilization=0.7,
     )
 
     model = FastLanguageModel.get_peft_model(
