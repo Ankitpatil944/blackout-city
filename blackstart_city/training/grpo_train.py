@@ -65,8 +65,8 @@ def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
 
 def action_quality_reward_func(prompts, completions, **kwargs) -> list[float]:
     """
-    Graded reward from observation state.
-    Base score 0.1 for any valid action ensures nonzero variance.
+    High-contrast graded reward from observation state.
+    Designed to heavily punish critical failures and strongly reward life-saving actions.
     """
     rewards = []
     for prompt, comp in zip(prompts, completions):
@@ -80,11 +80,10 @@ def action_quality_reward_func(prompts, completions, **kwargs) -> list[float]:
             action = parse_action_text(comp_text)
 
             if action is None:
-                rewards.append(-0.5)
+                rewards.append(-1.0)  # Severe penalty for invalid actions
                 continue
 
-            # Base score for any valid action — ensures variance exists
-            score = 0.1
+            score = 0.0  # Removed the 0.1 base score. The AI must earn its reward!
 
             critical_nodes = obs_data.get("critical_nodes", [])
             generators = obs_data.get("generators", [])
@@ -93,41 +92,43 @@ def action_quality_reward_func(prompts, completions, **kwargs) -> list[float]:
             unpowered_critical = [n for n in critical_nodes if not n.get("powered")]
             powered_critical = [n for n in critical_nodes if n.get("powered")]
 
-            # Reward rescuing critical nodes with low backup
+            # 1. HIGHEST PRIORITY: Rescue critical nodes (hospitals)
             for node in critical_nodes:
                 if not node.get("powered") and action.target_id == node.get("id"):
                     backup = node.get("backup_minutes_remaining", 999)
-                    score += 1.0 if backup < 15 else 0.5 if backup < 30 else 0.2
+                    score += 2.0 if backup < 15 else 1.0 if backup < 30 else 0.5
 
-            # Reward starting generator when none online
+            # 2. Start the grid if it's completely dead
             online_count = sum(1 for g in generators if g.get("online"))
             if online_count == 0 and action.action_type.value == "start_generator":
+                score += 1.5
+
+            # 3. Prevent blackout cascades (freq/reserve management)
+            if reserve < 10 and action.action_type.value in ("start_generator", "activate_battery_support"):
                 score += 1.0
 
-            # Reward any generation boost when reserve is low
-            if reserve < 10 and action.action_type.value in ("start_generator", "activate_battery_support"):
-                score += 0.5
-
-            # Reward shedding load when frequency is critical
             if freq < 59.5 and action.action_type.value == "shed_zone":
-                score += 0.8
+                score += 1.5
 
-            # Reward inspecting lines — always useful early game
+            # 4. Basic tactical moves
             if action.action_type.value == "inspect_line":
                 score += 0.2
 
-            # Penalize restoring zones before critical nodes are powered
+            # 5. SEVERE PENALTIES for bad strategic choices
+            # Don't restore standard zones while hospitals are dying
             if unpowered_critical and action.action_type.value == "restore_zone":
+                score -= 1.0
+
+            # Don't waste time publishing status when no hospitals are powered
+            if not powered_critical and action.action_type.value == "publish_status":
                 score -= 0.5
 
-            # Penalize publishing status before any critical node is powered
-            if not powered_critical and action.action_type.value == "publish_status":
-                score -= 0.3
-
-            rewards.append(max(-1.0, min(1.0, score)))
+            # We now allow rewards to scale up to 2.0 to give a stronger gradient for perfect actions
+            rewards.append(max(-1.0, min(2.0, score)))
         except Exception:
             rewards.append(0.0)
     return rewards
+
 
 
 def main():
