@@ -477,7 +477,7 @@ def main():
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=base_model_name,
         max_seq_length=4096,
-        load_in_4bit=True,
+        load_in_4bit=False,
         fast_inference=False,
         max_lora_rank=16,
         gpu_memory_utilization=0.6,
