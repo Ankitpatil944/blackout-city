@@ -62,8 +62,8 @@ graph LR
     E -->|Yes: Close Line| F[Downstream Substation]
     E -->|No: Hidden Damage| G[Line Trips & Destabilizes]
     
-    F -->|Restore Node| H[Critical Node\n(Hospital, Water)]
-    F -->|Restore Zone| I[Load Zone\n(Residential, Industrial)]
+    F -->|Restore Node| H["Critical Node<br>(Hospital, Water)"]
+    F -->|Restore Zone| I["Load Zone<br>(Residential, Industrial)"]
     
     classDef safe fill:#10b981,stroke:#047857,color:white;
     classDef danger fill:#ef4444,stroke:#b91c1c,color:white;
@@ -85,16 +85,16 @@ When the grid is failing, you don't want one agent. You want an escalating casca
 ```mermaid
 flowchart TD
     %% CascadeCommander Architecture
-    State([Environment State]) --> T0[Tier 0: GreedyPolicy\nFast, reactive baseline]
+    State([Environment State]) --> T0["Tier 0: GreedyPolicy<br>Fast, reactive baseline"]
     
     T0 -->|Fails Scenario| Context1(Capture Failure Context)
     T0 -->|Succeeds| End([Resolve])
     
-    Context1 --> T1[Tier 1: HeuristicPolicy\nA* Shortest-path Planner]
+    Context1 --> T1["Tier 1: HeuristicPolicy<br>A* Shortest-path Planner"]
     T1 -.->|Fails Scenario| Context2(Capture Failure Context & History)
     T1 -->|Succeeds| End
     
-    Context2 --> T2[Tier 2: LLMPolicy\nTheory-of-Mind Reasoning]
+    Context2 --> T2["Tier 2: LLMPolicy<br>Theory-of-Mind Reasoning"]
     T2 -.->|Re-collapse| EndFail([Catastrophe])
     T2 -->|Succeeds| End
     
