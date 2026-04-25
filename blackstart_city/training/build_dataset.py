@@ -152,5 +152,10 @@ def build_dataset(output_path: str = "dataset.jsonl", episodes_per_task: int = 2
 
 
 if __name__ == "__main__":
-    dataset = build_dataset()
+    import argparse
+    parser = argparse.ArgumentParser(description="Build GRPO/SFT training dataset.")
+    parser.add_argument("--output", default="dataset.jsonl", help="Output .jsonl path")
+    parser.add_argument("--episodes-per-task", type=int, default=20, help="Episodes per task")
+    args = parser.parse_args()
+    dataset = build_dataset(args.output, episodes_per_task=args.episodes_per_task)
     print(f"Wrote dataset to {dataset}")

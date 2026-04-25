@@ -478,9 +478,6 @@ def main():
         model_name=base_model_name,
         max_seq_length=4096,
         load_in_4bit=True,
-        fast_inference=False,
-        max_lora_rank=16,
-        gpu_memory_utilization=0.6,
     )
 
     # PEFT 0.14.0 bug workaround
@@ -554,10 +551,18 @@ def main():
     ]
     _reward_w = [0.2, 0.2, 0.2, 0.2, 0.2]
 
-    def combined_reward_func(completions, **kwargs):
-        import torch as _torch
-        scores = [_torch.tensor(fn(completions, **kwargs)) for fn in _reward_fns]
-        return sum(w * s for w, s in zip(_reward_w, scores)).tolist()
+    def combined_reward_func(prompts, completions, **kwargs):
+        """Weighted sum of all 5 reward signals. Used as fallback when
+        reward_weights is not supported by the installed TRL version."""
+        total = [0.0] * len(completions)
+        for fn, w in zip(_reward_fns, _reward_w):
+            try:
+                scores = fn(prompts=prompts, completions=completions, **kwargs)
+            except TypeError:
+                scores = fn(completions=completions, **kwargs)
+            for i, s in enumerate(scores):
+                total[i] += w * float(s)
+        return total
 
     try:
         trainer = GRPOTrainer(
@@ -637,11 +642,18 @@ def main():
     axes_flat = axes.flatten()
     axes_flat[5].set_visible(False)
 
+    # Detect whether training used individual reward funcs or combined fallback
+    _used_combined = not any(
+        any(sub in k for k in trainer.state.log_history[0].keys() if trainer.state.log_history)
+        for sub in reward_keys_substrings
+    ) if trainer.state.log_history else False
+
     for ax, sub, title, color in zip(axes_flat[:5], reward_keys_substrings, titles, colors):
         actual_key = None
+        search_key = "combined_reward_func" if _used_combined else sub
         for log in trainer.state.log_history:
             for k in log.keys():
-                if sub in k:
+                if search_key in k:
                     actual_key = k
                     break
             if actual_key:
