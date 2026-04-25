@@ -420,12 +420,75 @@ def failure_context_reward_func(prompts, completions, **kwargs) -> list[float]:
     return rewards
 
 
+def _push_to_hub(model, tokenizer, args) -> None:
+    """Merge LoRA adapters into the base weights and push to HuggingFace Hub."""
+    import os as _os
+    token = args.hub_token or _os.environ.get("HF_TOKEN")
+
+    if not args.hub_model_id:
+        console.print("[bold yellow]⚠  --hub-model-id not set — skipping Hub push.[/]")
+        return
+
+    console.print(Panel(
+        f"[bold #00FFCC]🚀  Merging LoRA → pushing to [white]{args.hub_model_id}[/][/]",
+        border_style="#00FFCC", padding=(0, 2)
+    ))
+
+    merged_dir = args.output_dir + "_merged"
+    # Unsloth's save_pretrained_merged fuses adapters into fp16 base weights.
+    model.save_pretrained_merged(merged_dir, tokenizer, save_method="merged_16bit")
+
+    from huggingface_hub import HfApi
+    api = HfApi(token=token)
+
+    # Create the model repo if it doesn't exist yet
+    api.create_repo(repo_id=args.hub_model_id, repo_type="model", exist_ok=True)
+    api.upload_folder(
+        folder_path=merged_dir,
+        repo_id=args.hub_model_id,
+        repo_type="model",
+        commit_message="GRPO v2 — 500 steps, failure_context-rich dataset",
+    )
+
+    # Also upload the reward curve image
+    png = f"{args.output_dir}/reward_curves.png"
+    if _os.path.exists(png):
+        api.upload_file(
+            path_or_fileobj=png,
+            path_in_repo="reward_curves.png",
+            repo_id=args.hub_model_id,
+            repo_type="model",
+        )
+
+    console.print(f"[bold #00FF66]✅  Model pushed → https://huggingface.co/{args.hub_model_id}[/]")
+
+    # Optionally push the dataset used for this run
+    if args.hub_dataset_id and _os.path.exists(args.dataset):
+        api.create_repo(repo_id=args.hub_dataset_id, repo_type="dataset", exist_ok=True)
+        api.upload_file(
+            path_or_fileobj=args.dataset,
+            path_in_repo="dataset_v2.jsonl",
+            repo_id=args.hub_dataset_id,
+            repo_type="dataset",
+            commit_message="Augmented GRPO dataset — failure_context-rich",
+        )
+        console.print(f"[bold #00FF66]✅  Dataset pushed → https://huggingface.co/datasets/{args.hub_dataset_id}[/]")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name", default="Qwen/Qwen2.5-3B-Instruct")
     parser.add_argument("--output-dir", default="artifacts/blackstart-city-grpo")
     parser.add_argument("--dataset", default="dataset.jsonl", help="Path to training dataset")
     parser.add_argument("--max-steps", type=int, default=500)
+    parser.add_argument("--push-to-hub", action="store_true",
+                        help="Merge LoRA and push model + dataset to HuggingFace Hub after training")
+    parser.add_argument("--hub-model-id", default=None,
+                        help="HF repo id to push to, e.g. your-username/blackstart-city-grpo-v2")
+    parser.add_argument("--hub-dataset-id", default=None,
+                        help="HF dataset repo id, e.g. your-username/blackstart-city-dataset")
+    parser.add_argument("--hub-token", default=None,
+                        help="HuggingFace write token (or set HF_TOKEN env var)")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -510,6 +573,9 @@ def main():
     ))
     model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
+
+    if args.push_to_hub:
+        _push_to_hub(model, tokenizer, args)
 
     # --- PREMIUM DASHBOARD — all 5 reward signals ---
     plt.style.use('dark_background')
