@@ -6,14 +6,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from datasets import load_dataset
-# PatchFastRL is intentionally NOT called here. Unsloth 2026.4.x has a dtype
-# bug in its fast_lora kernel (Half vs Float in matmul_lora/backward) that
-# cannot be fixed from user code. Standard TRL GRPOTrainer is used instead.
-from unsloth import FastLanguageModel, is_bfloat16_supported
+
+# Standard HF + PEFT — no Unsloth import so Unsloth cannot auto-patch GRPOTrainer.
+# Unsloth's fast_lora kernels crash with CUBLAS_STATUS_EXECUTION_FAILED on
+# CUDA 13.0 + T4 (cublasGemmEx fp16 failure in apply_lora_mlp_swiglu). Using
+# plain transformers + PEFT avoids all fast-kernel paths entirely.
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import get_peft_model, LoraConfig, TaskType
 
 from trl import GRPOConfig, GRPOTrainer
 from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 from blackstart_city.training.model_utils import parse_action_text
+
+
+def is_bfloat16_supported() -> bool:
+    return torch.cuda.is_available() and torch.cuda.is_bf16_supported()
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -474,44 +481,40 @@ def main():
         )
 
     console.print("[bold #00FFCC]⚡ Loading model & tokenizer…[/]")
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=base_model_name,
-        max_seq_length=4096,
-        load_in_4bit=False,
+    _dtype = torch.float16  # T4 is fp16-only (no bf16)
+    model = AutoModelForCausalLM.from_pretrained(
+        base_model_name,
+        torch_dtype=_dtype,
+        device_map="auto",
     )
+    tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-    # PEFT 0.14.0 bug workaround
-    model.warnings_issued = {}
-
-    model = FastLanguageModel.get_peft_model(
-        model,
+    lora_cfg = LoraConfig(
         r=16,
-        target_modules=["q_proj","k_proj","v_proj","o_proj",
-                        "gate_proj","up_proj","down_proj"],
         lora_alpha=16,
-        use_gradient_checkpointing=False,
-        random_state=3407,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
+        lora_dropout=0.0,
+        bias="none",
+        task_type=TaskType.CAUSAL_LM,
     )
+    model = get_peft_model(model, lora_cfg)
+    model.print_trainable_parameters()
 
     if adapter_path:
-        # Load SFT weights directly into the default adapter at compute dtype.
-        # Do NOT use load_adapter() — it creates a second adapter slot ("sft_init")
-        # alongside "default". Unsloth's fast_lora kernel hardcodes "default", so
-        # "default" adapter (float32 from get_peft_model) stays active and crashes.
-        # set_peft_model_state_dict writes into the existing default slot and
-        # respects name mapping, so Unsloth always sees the correct dtype.
         from peft import set_peft_model_state_dict
         from safetensors.torch import load_file as _load_safetensors
-        _compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         _sft_path = Path(adapter_path) / "adapter_model.safetensors"
         if _sft_path.exists():
             _sft_weights = {
-                k: v.to(_compute_dtype)
+                k: v.to(_dtype)
                 for k, v in _load_safetensors(str(_sft_path)).items()
             }
             set_peft_model_state_dict(model, _sft_weights)
             console.print(
-                f"[green]Loaded {len(_sft_weights)} SFT weights → {_compute_dtype}[/]"
+                f"[green]Loaded {len(_sft_weights)} SFT weights → {_dtype}[/]"
             )
         else:
             console.print(f"[yellow]No adapter_model.safetensors at {_sft_path}, using random LoRA[/]")
@@ -541,7 +544,7 @@ def main():
         temperature=0.9,
         bf16=is_bfloat16_supported(),
         fp16=not is_bfloat16_supported(),
-        optim="adamw_8bit",
+        optim="adamw_torch",
         report_to="none",
     )
 
@@ -587,30 +590,6 @@ def main():
             args=training_args,
             train_dataset=dataset,
             callbacks=[RichGRPOCallback(log_every=5)],
-        )
-
-    # Final dtype guard — must run immediately before train().
-    # GRPOTrainer creates an internal ref_model (frozen copy) during __init__.
-    # That copy is NOT the same Python object as `model`, so iterating
-    # model.named_parameters() does not fix ref_model's float32 LoRA tensors.
-    # We must cast BOTH model and trainer.ref_model here.
-    _compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-    _cast_count = 0
-
-    def _cast_all_lora(m):
-        nonlocal _cast_count
-        for _n, _p in m.named_parameters():
-            if _p.is_floating_point() and _p.dtype != _compute_dtype:
-                _p.data = _p.data.to(_compute_dtype)
-                _cast_count += 1
-
-    _cast_all_lora(model)
-    if hasattr(trainer, "ref_model") and trainer.ref_model is not None:
-        _cast_all_lora(trainer.ref_model)
-
-    if _cast_count:
-        console.print(
-            f"[yellow]Cast {_cast_count} tensors → {_compute_dtype} (model + ref_model)[/]"
         )
 
     console.print(Panel(
