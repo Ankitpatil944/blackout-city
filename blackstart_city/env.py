@@ -77,11 +77,11 @@ class BlackstartCityEnv:
             step_count=0,
             max_steps=max_steps,
             done=False,
-            generators=[generator.model_copy(deep=True) for generator in self._scenario.generators],
-            substations=[sub.model_copy(deep=True) for sub in self._scenario.substations],
-            lines=[line.model_copy(deep=True) for line in self._scenario.lines],
-            critical_nodes=[node.model_copy(deep=True) for node in self._scenario.critical_nodes],
-            zones=[zone.model_copy(deep=True) for zone in self._scenario.zones],
+            generators=[generator.model_dump() for generator in self._scenario.generators],
+            substations=[sub.model_dump() for sub in self._scenario.substations],
+            lines=[line.model_dump() for line in self._scenario.lines],
+            critical_nodes=[node.model_dump() for node in self._scenario.critical_nodes],
+            zones=[zone.model_dump() for zone in self._scenario.zones],
             available_generation_mw=self._scenario.initial_available_generation_mw,
             served_load_mw=self._scenario.initial_served_load_mw,
             reserve_margin_mw=0,
@@ -93,7 +93,7 @@ class BlackstartCityEnv:
         )
         self._recompute_state()
         self._state.command_center = initial_command_center(self._state)
-        self._state.active_constraints = [c.model_copy(deep=True) for c in self._scenario.constraints]
+        self._state.active_constraints = [c.model_dump() for c in self._scenario.constraints]
         self._state.news_feed = []
         self._state.constraint_violations = 0
         self._state.score = compute_final_score(self._state, self._scenario)
@@ -651,20 +651,20 @@ class BlackstartCityEnv:
             reserve_margin_mw=state.reserve_margin_mw,
             frequency_hz=state.frequency_hz,
             unstable_islands=state.unstable_islands,
-            generators=[item.model_copy(deep=True) for item in state.generators],
-            substations=[item.model_copy(deep=True) for item in state.substations],
-            lines=[item.model_copy(deep=True) for item in state.lines],
-            critical_nodes=[item.model_copy(deep=True) for item in state.critical_nodes],
-            zones=[item.model_copy(deep=True) for item in state.zones],
+            generators=[item.model_dump() for item in state.generators],
+            substations=[item.model_dump() for item in state.substations],
+            lines=[item.model_dump() for item in state.lines],
+            critical_nodes=[item.model_dump() for item in state.critical_nodes],
+            zones=[item.model_dump() for item in state.zones],
             warnings=warnings,
             allowed_actions=self._compute_allowed_actions(),
             last_action_result=state.last_action_result,
             last_action_error=state.last_action_error,
-            reward_breakdown=state.reward_breakdown.model_copy(deep=True),
-            command_center=state.command_center.model_copy(deep=True),
-            active_constraints=[c.model_copy(deep=True) for c in state.active_constraints],
-            news_feed=[e.model_copy(deep=True) for e in state.news_feed],
-            rubric=state.rubric.model_copy(deep=True),
+            reward_breakdown=state.reward_breakdown.model_dump(),
+            command_center=state.command_center.model_dump(),
+            active_constraints=[c.model_dump() for c in state.active_constraints],
+            news_feed=[e.model_dump() for e in state.news_feed],
+            rubric=state.rubric.model_dump(),
             reward=reward,
             done=state.done,
         )
