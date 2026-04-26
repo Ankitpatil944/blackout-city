@@ -673,9 +673,10 @@ def render_web_ui() -> str:
       <div class="controls" style="margin-bottom:0.85rem;">
         <label>Task
           <select id="task-select">
-            <option value="local_blackstart">local_blackstart</option>
-            <option value="island_rejoin">island_rejoin</option>
-            <option value="city_cascade_recovery">city_cascade_recovery</option>
+            <option value="local_blackstart">local_blackstart (easy)</option>
+            <option value="island_rejoin">island_rejoin (medium)</option>
+            <option value="city_cascade_recovery">city_cascade_recovery (hard)</option>
+            <option value="mega_cascade">mega_cascade (extreme)</option>
           </select>
         </label>
         <label>Seed <input id="seed-input" type="number" value="0" min="0" style="width:88px"></label>
@@ -771,6 +772,23 @@ def render_web_ui() -> str:
       <div class="card">
         <h2>Rollout Log</h2>
         <div id="rollout-log" class="log"></div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════  CONSTRAINTS + NEWS  ═══════════════════ -->
+    <div class="grid" style="margin-top:1.1rem;">
+      <div class="card">
+        <h2>Active Constraints</h2>
+        <div id="constraint-list" class="list">
+          <div class="small" style="color:var(--muted);">No scenario loaded.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>News Feed</h2>
+        <div id="news-list" class="list">
+          <div class="small" style="color:var(--muted);">No events yet.</div>
+        </div>
       </div>
     </div>
 
@@ -1163,6 +1181,65 @@ def render_web_ui() -> str:
         updateMap(observation);
         updateOverlays(observation);
         renderRewardBreakdown(observation.reward_breakdown);
+        renderConstraints(observation.active_constraints || []);
+        renderNewsFeed(observation.news_feed || []);
+      }
+
+      function renderConstraints(constraints) {
+        const container = document.getElementById('constraint-list');
+        if (!constraints || constraints.length === 0) {
+          container.innerHTML = '<div class="small" style="color:var(--muted);">No constraints for this scenario.</div>';
+          return;
+        }
+        container.innerHTML = constraints.map(c => {
+          const active = c.active;
+          const violated = c.violated;
+          const kind = violated ? 'danger' : active ? 'warn' : 'safe';
+          const statusLabel = violated ? 'VIOLATED' : active ? 'active' : 'inactive';
+          let detail = '';
+          if (c.constraint_type === 'forbidden_target') {
+            detail = `Forbidden: ${c.forbidden_action_type} on <code>${c.forbidden_target_id}</code>`;
+          } else if (c.constraint_type === 'priority_order') {
+            detail = `Must restore <code>${c.must_restore_first}</code> before <code>${c.before_restoring}</code>`;
+          } else if (c.constraint_type === 'conditional_limit') {
+            detail = `<code>${c.limit_target_id}</code> ≤ ${c.limit_mw} MW until ${c.condition_field} > ${c.condition_threshold}`;
+          }
+          return \`
+            <div class="item">
+              <div class="item-line">
+                <strong>\${c.id}</strong>
+                <span class="tag \${kind}">\${statusLabel}</span>
+              </div>
+              <div class="small">\${c.text}</div>
+              <div class="small mono" style="margin-top:0.3rem;">\${detail}</div>
+            </div>
+          \`;
+        }).join('');
+      }
+
+      function renderNewsFeed(events) {
+        const container = document.getElementById('news-list');
+        if (!events || events.length === 0) {
+          container.innerHTML = '<div class="small" style="color:var(--muted);">No events revealed yet.</div>';
+          return;
+        }
+        container.innerHTML = events.map(ev => {
+          const kind = ev.impact_level === 'critical' ? 'danger' : ev.impact_level === 'warning' ? 'warn' : 'safe';
+          const extras = [];
+          if (ev.reduces_backup_node) extras.push(\`Backup drain: \${ev.reduces_backup_node} -\${ev.reduces_backup_by} min\`);
+          if (ev.activates_constraint_id) extras.push(\`Activates constraint: \${ev.activates_constraint_id}\`);
+          if (ev.public_trust_delta && ev.public_trust_delta !== 0) extras.push(\`Public trust: \${ev.public_trust_delta > 0 ? '+' : ''}\${ev.public_trust_delta.toFixed(2)}\`);
+          return \`
+            <div class="item">
+              <div class="item-line">
+                <strong>\${ev.headline}</strong>
+                <span class="tag \${kind}">\${ev.impact_level}</span>
+              </div>
+              <div class="small">\${ev.detail}</div>
+              \${extras.length ? \`<div class="small mono" style="margin-top:0.3rem;">\${extras.join(' | ')}</div>\` : ''}
+            </div>
+          \`;
+        }).join('');
       }
 
       function renderRewardBreakdown(breakdown) {

@@ -455,6 +455,7 @@ class BlackstartState(OpenEnvState):
     unstable_islands: int
     cumulative_reward: float = 0.0
     cumulative_penalty: float = 0.0
+    frequency_offset: float = 0.0
     catastrophe_triggered: bool = False
     hospital_failures: int = 0
     failed_critical_nodes: list[str] = Field(default_factory=list)

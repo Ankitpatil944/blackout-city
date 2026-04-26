@@ -170,9 +170,9 @@ def _restore_env_state_from_obs(env: BlackstartCityEnv, obs_data: dict) -> None:
 
     # ── News feed ─────────────────────────────────────────────────────────────
     if obs_data.get("news_feed"):
-        from blackstart_city.models import NewsItem
+        from blackstart_city.models import NewsEvent
         try:
-            state.news_feed = [NewsItem.model_validate(n) for n in obs_data["news_feed"]]
+            state.news_feed = [NewsEvent.model_validate(n) for n in obs_data["news_feed"]]
         except Exception:
             pass
 

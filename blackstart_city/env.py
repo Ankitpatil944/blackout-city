@@ -7,7 +7,6 @@ from blackstart_city.command_center import coordination_status_text, initial_com
 from blackstart_city.grading import build_reward_breakdown, clamp_score, compute_final_score, compute_rubric_score, score_status_update
 from blackstart_city.models import (
     ActionType,
-    AssetHealth,
     BlackstartAction,
     BlackstartObservation,
     BlackstartState,
@@ -124,10 +123,10 @@ class BlackstartCityEnv:
         catastrophe_penalty = 0.0
 
         # --- Constraint check: penalise violations before applying the action ---
+        # Saved separately because the match block below reassigns action_penalty
+        # from the handler's return value — without saving here, constraint penalties
+        # would be silently overwritten and never reach the reward calculation.
         constraint_penalty = self._check_constraints(action)
-        if constraint_penalty > 0.0:
-            action_penalty += constraint_penalty
-            # Short-circuit: still process the action so state advances, but flag it
 
         result = ""
 
@@ -158,12 +157,18 @@ class BlackstartCityEnv:
                 result = f"Unsupported action type: {action.action_type.value}"
                 action_penalty = 0.08
 
+        # Add constraint penalty on top of handler penalty — must happen after match so
+        # the handler cannot overwrite it.
+        action_penalty += constraint_penalty
+
         state.action_history.append(action_signature)
         state.last_action_result = result
         self._recompute_state()
         self._passive_dynamics(action.action_type)
         catastrophe_penalty = self._maybe_trigger_catastrophe()
         self._recompute_state()
+        # Decay frequency stress offset once per step (75% persistence → ~4-step half-life)
+        state.frequency_offset = round(state.frequency_offset * 0.75, 3)
         self._update_command_center(
             action=action,
             critical_reward=critical_reward,
@@ -191,7 +196,11 @@ class BlackstartCityEnv:
             state.last_action_result += " Status was published before visible critical-service recovery."
         if shaped <= 0.02 and score_delta <= 0.0 and action.action_type not in {ActionType.INSPECT_LINE, ActionType.PUBLISH_STATUS}:
             action_penalty += 0.03
-        reward = shaped + score_delta - action_penalty - catastrophe_penalty
+        # Scale shaped rewards by 0.5 to prevent double-counting with score_delta:
+        # both signals capture the same progress events (e.g. hospital restore → shaped 0.24
+        # AND score_delta ≈ +0.07 from critical_ratio jump). Halving shaped keeps dense
+        # per-action guidance without overwhelming the holistic score signal.
+        reward = 0.5 * shaped + score_delta - action_penalty - catastrophe_penalty
         state.cumulative_reward = round(max(-2.0, min(10.0, state.cumulative_reward + reward)), 3)
         state.cumulative_penalty = round(min(2.0, state.cumulative_penalty + action_penalty + catastrophe_penalty), 3)
         state.reward_breakdown = build_reward_breakdown(
@@ -308,7 +317,7 @@ class BlackstartCityEnv:
             return "Cannot restore critical node before feeder is energized.", 0.0, 0.0, 0.0, 0.0, 0.0, 0.08
         state = self._require_state()
         if state.reserve_margin_mw < node.demand_mw:
-            state.frequency_hz -= 0.25
+            state.frequency_offset -= 0.25
             return "Critical load added without enough reserve margin, stressing the island.", 0.0, 0.0, -0.05, 0.0, 0.0, 0.1
         node.powered = True
         if node.type == CriticalNodeType.HOSPITAL:
@@ -331,7 +340,7 @@ class BlackstartCityEnv:
         if restore_mw <= 0:
             return "Zone already fully restored.", 0.0, 0.0, 0.0, 0.0, 0.0, 0.02
         if state.reserve_margin_mw < restore_mw:
-            state.frequency_hz -= 0.2
+            state.frequency_offset -= 0.2
             return "Zone restoration attempted without adequate margin, causing instability.", 0.0, 0.0, -0.04, 0.0, 0.0, 0.1
         zone.restored_pct = min(100, zone.restored_pct + int((restore_mw / zone.demand_mw) * 100))
         weight = 0.08 if zone.priority.value == "corridor" else 0.05 if zone.priority.value == "residential" else 0.03
@@ -345,8 +354,6 @@ class BlackstartCityEnv:
             return "Zone already fully shed.", 0.0, 0.0, 0.0, 0.0, 0.0, 0.02
         shed_pct = min(zone.restored_pct, int((requested_mw / zone.demand_mw) * 100))
         zone.restored_pct = max(0, zone.restored_pct - max(5, shed_pct))
-        state = self._require_state()
-        state.frequency_hz = min(60.0, state.frequency_hz + 0.08)
         return f"Load shed from {target_id} to recover stability.", 0.0, 0.0, 0.08, 0.0, 0.0, 0.0
 
     def _sync_islands(self, target_id: str) -> tuple[str, float, float, float, float, float, float]:
@@ -357,18 +364,28 @@ class BlackstartCityEnv:
         if line.damaged and not line.inspected:
             return "Tie-line must be inspected before synchronization.", 0.0, 0.0, 0.0, 0.0, 0.0, 0.08
         if state.frequency_hz < 59.7 or state.reserve_margin_mw < 6:
-            state.frequency_hz -= 0.15
+            state.frequency_offset -= 0.15
             return "Synchronization attempted under weak stability conditions.", 0.0, 0.0, -0.05, 0.0, 0.0, 0.12
         line.closed = True
         line.tripped = False
-        if self._find_substation(line.from_bus):
-            self._find_substation(line.from_bus).island_id = self._find_substation(line.to_bus).island_id
+        from_sub = self._find_substation(line.from_bus)
+        to_sub = self._find_substation(line.to_bus)
+        if from_sub is not None and to_sub is not None:
+            old_island = from_sub.island_id
+            new_island = to_sub.island_id
+            for sub in self._require_state().substations:
+                if sub.island_id == old_island:
+                    sub.island_id = new_island
         return "Grid islands synchronized through the tie-line.", 0.0, 0.03, 0.12, 0.0, 0.0, 0.0
 
     def _activate_battery(self, target_id: str) -> tuple[str, float, float, float, float, float, float]:
         generator = self._find_generator(target_id)
         if generator is None:
             return "Battery asset not found.", 0.0, 0.0, 0.0, 0.0, 0.0, 0.08
+        if generator.online:
+            return "Battery support already active.", 0.0, 0.0, 0.0, 0.0, 0.0, 0.03
+        if not any(unit.online for unit in self._require_state().generators):
+            return "Battery support cannot activate without an energized system reference.", 0.0, 0.0, 0.0, 0.0, 0.0, 0.08
         generator.online = True
         generator.current_output_mw = generator.capacity_mw
         return f"Battery support {target_id} activated.", 0.0, 0.0, 0.07, 0.0, 0.0, 0.0
@@ -405,7 +422,7 @@ class BlackstartCityEnv:
                 state.hospital_failures += 1
 
         if not any(node.powered for node in state.critical_nodes if node.type == CriticalNodeType.TELECOM):
-            state.frequency_hz = max(58.8, state.frequency_hz - 0.03)
+            state.frequency_offset -= 0.03
         if not any(node.powered for node in state.critical_nodes if node.type == CriticalNodeType.WATER):
             state.cumulative_penalty += 0.01
 
@@ -423,8 +440,11 @@ class BlackstartCityEnv:
 
     def _maybe_trigger_catastrophe(self) -> float:
         state = self._require_state()
-        if state.frequency_hz < 59.1:  # Realistic cascade threshold (was 59.0, too lenient)
+        # Only fire when the grid was actually energized — a pre-blackstart state
+        # with zero generation should never count as a "second collapse".
+        if state.frequency_hz < 59.1 and state.available_generation_mw > 0:  # Realistic cascade threshold
             state.catastrophe_triggered = True
+            state.frequency_offset = 0.0  # Clear transient stress; grid is fully collapsed
             for line in state.lines:
                 line.closed = False
                 line.tripped = True
@@ -450,11 +470,14 @@ class BlackstartCityEnv:
         state.served_load_mw = critical_load + zone_load
         state.reserve_margin_mw = max(0, online_generation - state.served_load_mw)
 
+        # Base frequency from reserve margin ratio; frequency_offset captures transient stress
+        # (unsafe actions, line trips, bad syncs) that persists and decays across steps.
         if online_generation == 0:
-            state.frequency_hz = 58.8
+            base_freq = 58.8
         else:
             margin_ratio = state.reserve_margin_mw / max(1, online_generation)
-            state.frequency_hz = round(min(60.02, max(58.8, 59.4 + margin_ratio * 1.1)), 2)
+            base_freq = 59.4 + margin_ratio * 1.1
+        state.frequency_hz = round(min(60.02, max(58.8, base_freq + state.frequency_offset)), 2)
 
         for line in state.lines:
             line.current_flow_mw = 0
@@ -468,7 +491,7 @@ class BlackstartCityEnv:
                         line.tripped = True
                         line.closed = False
                         self._destabilize(line.to_bus)
-                        state.frequency_hz = max(58.9, state.frequency_hz - 0.18)
+                        state.frequency_offset -= 0.18
 
         state.unstable_islands = self._count_unstable_islands()
         state.score = clamp_score(compute_final_score(state, self._require_scenario()))
@@ -610,7 +633,17 @@ class BlackstartCityEnv:
             allowed.append(ActionType.RESTORE_ZONE)
         if any(z.restored_pct > 0 for z in state.zones):
             allowed.append(ActionType.SHED_ZONE)
-        if any(line.damaged for line in state.lines):
+        # SYNC_ISLANDS is only meaningful for tie-lines connecting substations in different islands
+        tie_lines = [
+            line for line in state.lines
+            if not line.closed and not line.tripped
+            and line.from_bus in {s.id for s in state.substations}
+            and line.to_bus in {s.id for s in state.substations}
+            and any(s.id == line.from_bus and s.island_id != next(
+                (t.island_id for t in state.substations if t.id == line.to_bus), s.island_id
+            ) for s in state.substations)
+        ]
+        if tie_lines:
             allowed.append(ActionType.SYNC_ISLANDS)
         if any(not g.online for g in state.generators if not g.blackstart_capable):
             allowed.append(ActionType.ACTIVATE_BATTERY_SUPPORT)
@@ -741,7 +774,7 @@ class BlackstartCityEnv:
         penalty = 0.0
 
         for constraint in state.active_constraints:
-            if not constraint.active or constraint.violated:
+            if not constraint.active:
                 continue
 
             if constraint.constraint_type == ConstraintType.FORBIDDEN_TARGET:
@@ -763,7 +796,6 @@ class BlackstartCityEnv:
                     and constraint.limit_mw is not None
                     and action.requested_mw > constraint.limit_mw
                 ):
-                    # Only a violation when the condition is NOT yet met
                     condition_met = False
                     if constraint.condition_field == "reserve_margin_mw":
                         condition_met = state.reserve_margin_mw >= (constraint.condition_threshold or 0)

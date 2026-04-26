@@ -21,16 +21,24 @@ def score_status_update(status: StatusUpdate | None, scenario: Scenario, state: 
     )
     score = 0.0
 
+    # Keyword match: cap at 4 unique keywords (0.08 max) to force state-based content too.
+    matched_keywords: set[str] = set()
     for keyword in scenario.status_keywords:
-        if keyword.lower() in text:
+        kw = keyword.lower()
+        if kw in text and kw not in matched_keywords and len(matched_keywords) < 4:
+            matched_keywords.add(kw)
             score += 0.02
 
-    if any(node.powered for node in state.critical_nodes if node.type == CriticalNodeType.HOSPITAL) and "hospital" in text:
-        score += 0.02
+    # State-aligned bonuses: claims must match reality.
+    hospitals_powered = [node for node in state.critical_nodes if node.powered and node.type == CriticalNodeType.HOSPITAL]
+    if hospitals_powered and "hospital" in text:
+        score += 0.02  # truthfully reporting restored hospitals
+    if not state.catastrophe_triggered and state.frequency_hz >= 59.7 and "stable" in text:
+        score += 0.01  # accurate stability claim
     if state.catastrophe_triggered and "stable" in text:
-        score -= 0.03
+        score -= 0.05  # lying about stability after second collapse
     if "owner" in status.owner.lower() or "commander" in status.owner.lower():
-        score += 0.01
+        score += 0.01  # named owner signals accountability
 
     return round(max(0.0, min(0.12, score)), 2)
 
@@ -56,9 +64,10 @@ def compute_final_score(state: BlackstartState, scenario: Scenario) -> float:
         stability -= 0.45
     stability = max(0.0, stability)
 
-    inspection_ratio = 0.0
     damaged = [line for line in state.lines if line.damaged]
-    if damaged:
+    if not damaged:
+        inspection_ratio = 1.0  # nothing risky to inspect → full marks
+    else:
         inspected = sum(1 for line in damaged if line.inspected)
         inspection_ratio = inspected / len(damaged)
 
