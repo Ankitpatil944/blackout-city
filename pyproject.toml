@@ -7,7 +7,7 @@ name = "blackstart-city"
 version = "0.1.0"
 description = "OpenEnv benchmark for city-scale cascading blackout recovery"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.115.0",
   "openenv-core>=0.2.3",
