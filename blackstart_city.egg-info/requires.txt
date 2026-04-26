@@ -17,3 +17,4 @@ unsloth[colab-new]>=2024.9.0
 matplotlib>=3.9.0
 numpy>=1.26.0
 rich>=13.0.0
+wandb>=0.17.0

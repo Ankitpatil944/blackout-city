@@ -364,7 +364,7 @@ flowchart TD
 xychart-beta
     title "Agent Performance by Policy  (city_cascade_recovery, 50 episodes)"
     x-axis ["Greedy Baseline", "Heuristic Planner", "GRPO-Trained LLM"]
-    y-axis "Score  (0–1)" 0 --> 1
+    y-axis "Score  (0.01–0.99)" 0.01 --> 0.99
     bar [0.41, 0.63, 0.81]
     line [0.41, 0.63, 0.81]
 ```
@@ -386,7 +386,7 @@ xychart-beta
 xychart-beta
     title "GRPO Reward by Signal During Training (500 steps)"
     x-axis "Training Step" [0, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500]
-    y-axis "Reward (0–1)" 0 --> 1
+    y-axis "Reward (0.01–0.99)" 0.01 --> 0.99
     line [0.10, 0.55, 0.90, 0.97, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00]
     line [0.05, 0.18, 0.32, 0.48, 0.60, 0.68, 0.74, 0.78, 0.80, 0.82, 0.83]
     line [0.02, 0.08, 0.18, 0.30, 0.42, 0.52, 0.60, 0.65, 0.68, 0.70, 0.71]
