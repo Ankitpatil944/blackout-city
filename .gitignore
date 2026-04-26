@@ -1,0 +1,21 @@
+.pytest_cache/
+.venv/
+__pycache__/
+*.pyc
+dist/
+build/
+.env
+outputs/
+*.egg-info/
+# IDE
+.vscode/
+.idea/
+# OS
+.DS_Store
+Thumbs.db
+# Binary artifacts — tracked separately, not pushed to HF Space
+*.png
+*.jpg
+# Allow the before/after training screenshots
+!artifacts/before_grpo.jpeg
+!artifacts/after_sft_grpo.jpeg

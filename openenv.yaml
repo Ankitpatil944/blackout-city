@@ -1,0 +1,57 @@
+spec_version: 1
+name: blackstart_city
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000
+version: "0.1.0"
+description: >
+  Blackstart City is an OpenEnv benchmark for city-scale blackout recovery.
+  An AI agent must restart generation, energize substations, restore hospitals,
+  telecom, water, and emergency services, and avoid a second cascading collapse.
+author: meta-hack-submission
+tags:
+  - openenv
+  - blackout
+  - critical-infrastructure
+  - restoration
+  - city-resilience
+license: mit
+endpoints:
+  - /reset
+  - /step
+  - /state
+  - /tasks
+  - /grader
+  - /baseline
+  - /health
+  - /schema
+  - /web
+  - /manifest
+tasks:
+  - id: local_blackstart
+    difficulty: easy
+    description: Restore one district hospital and nearby loads after a local blackout.
+    max_steps: 12
+    score_range: [0.01, 0.99]
+    grader: blackstart_city.task_graders:LocalBlackstartGrader
+  - id: island_rejoin
+    difficulty: medium
+    description: Recover multiple islands and safely reconnect them under partial observability.
+    max_steps: 18
+    score_range: [0.01, 0.99]
+    grader: blackstart_city.task_graders:IslandRejoinGrader
+  - id: city_cascade_recovery
+    difficulty: hard
+    description: Restore city-scale critical services while preventing a second blackout.
+    max_steps: 26
+    score_range: [0.01, 0.99]
+    grader: blackstart_city.task_graders:CityCascadeRecoveryGrader
+  - id: mega_cascade
+    difficulty: extreme
+    description: >
+      Two hospitals compete for one substation. Conflicting council orders. 8-minute backup.
+      School-zone downed line must never be energized. Industrial zone capped until reserve > 20 MW.
+    max_steps: 35
+    score_range: [0.01, 0.99]
+    grader: blackstart_city.task_graders:CityCascadeRecoveryGrader
