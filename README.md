@@ -1,3 +1,15 @@
+---
+title: Blackstart City
+emoji: ⚡
+colorFrom: yellow
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: true
+license: mit
+short_description: RL benchmark — restore a city after a cascading blackout
+---
+
 <div align="center">
 
 # ⚡ Blackstart City

@@ -27,7 +27,7 @@ MANIFEST = {
         }
         for spec in TASK_SPECS.values()
     ],
-    "endpoints": ["/reset", "/step", "/state", "/tasks", "/grader", "/baseline", "/baseline/next", "/baseline/step", "/command/brief", "/compare", "/health", "/schema", "/web", "/manifest"]
+    "endpoints": ["/reset", "/step", "/state", "/tasks", "/grader", "/baseline", "/baseline/next", "/baseline/step", "/command/brief", "/compare", "/health", "/schema", "/metadata", "/mcp", "/web", "/manifest"]
 }
 
 
@@ -71,7 +71,7 @@ class CompareRequest(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "healthy"}
 
 
 @app.get("/tasks")
@@ -89,13 +89,43 @@ def tasks() -> dict[str, list[dict[str, Any]]]:
     }
 
 
+@app.get("/metadata")
+def metadata() -> dict[str, Any]:
+    return {
+        "name": "blackstart_city",
+        "description": (
+            "OpenEnv benchmark for city-scale blackout recovery. "
+            "An AI agent must restart generation, energize substations, restore hospitals, "
+            "telecom, water, and emergency services without triggering a second collapse."
+        ),
+        "version": "0.1.0",
+        "task_ids": TASK_ORDER,
+        "difficulty_tiers": ["easy", "medium", "hard", "extreme"],
+        "score_range": [0.01, 0.99],
+    }
+
+
 @app.get("/schema")
 def schema() -> dict[str, Any]:
+    from blackstart_city.models import BlackstartAction, BlackstartObservation, BlackstartState
     return {
+        "action": BlackstartAction.model_json_schema(),
+        "observation": BlackstartObservation.model_json_schema(),
+        "state": BlackstartState.model_json_schema(),
         "task_ids": TASK_ORDER,
-        "action_model": "blackstart_city.models.BlackstartAction",
-        "observation_model": "blackstart_city.models.BlackstartObservation",
-        "state_model": "blackstart_city.models.BlackstartState",
+    }
+
+
+@app.post("/mcp")
+async def mcp(request: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request.get("id"),
+        "result": {
+            "name": "blackstart_city",
+            "version": "0.1.0",
+            "capabilities": ["reset", "step", "state", "grader"],
+        },
     }
 
 
