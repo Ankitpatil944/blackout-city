@@ -18,7 +18,7 @@ short_description: RL benchmark — restore a city after a cascading blackout
 
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-compliant-22c55e?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTEzIDJMMyAxNGgxMGwtMSA4IDEwLTEySDF3bC0xLTh6Ii8+PC9zdmc+)](https://huggingface.co/spaces/ankit944/blackstart-city)
 [![HF Space](https://img.shields.io/badge/🤗_Space-Live_Demo-0ea5e9?style=for-the-badge)](https://huggingface.co/spaces/ankit944/blackstart-city)
-[![Blog](https://img.shields.io/badge/📝_HF_Blog-Mini_Post-f59e0b?style=for-the-badge)](https://huggingface.co/blog/YOUR_POST)
+[![Blog](https://img.shields.io/badge/📝_HF_Blog-Mini_Post-f59e0b?style=for-the-badge)](https://huggingface.co/spaces/ankit944/blackstart-city/blob/main/BLOG.md)
 [![License](https://img.shields.io/badge/license-MIT-6366f1?style=for-the-badge)](LICENSE)
 
 </div>
@@ -602,7 +602,7 @@ artifacts/
 | SFT training data (latest) | [Built-different/latest](https://huggingface.co/spaces/SidditaVarma/Built-different/tree/main/latest) |
 | 🤗 HF Space (live environment) | https://huggingface.co/spaces/YOUR_HF_SPACE |
 | ▶️ Demo video (< 2 min) | https://youtube.com/YOUR_VIDEO |
-| 📝 HF Blog post | https://huggingface.co/blog/YOUR_POST |
+| 📝 HF Blog post | https://huggingface.co/spaces/ankit944/blackstart-city/blob/main/BLOG.md |
 | 📓 Colab notebook | [`notebooks/grpo_from_sft.ipynb`](notebooks/grpo_from_sft.ipynb) |
 | 📊 Reward curves | [`artifacts/reward_comparison.png`](artifacts/reward_comparison.png) |
 
