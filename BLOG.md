@@ -119,6 +119,11 @@ The numbers speak for themselves:
 | News-reactive actions | 0% | 20% | **71%** |
 | Re-collapse rate | 60% | 35% | **12%** |
 
+| Before Training | After Training |
+|:-:|:-:|
+| ![Before — reward oscillating, constraint violations at step ~50](assets/before_training.png) | ![After — reward stable, constraints respected at step ~300](assets/after_training.png) |
+| *Early training: reward swings wildly, format errors common* | *Late training: +4.5 reward, format reward locked at 1.0* |
+
 GRPO reward climbed from **−0.9 at step 1** (Colab baseline) to **+4.5 at step 300** (final run). Format reward hit **1.0 and stayed there** — the model never outputs invalid JSON after training.
 
 ---
@@ -204,8 +209,7 @@ This means:
 |---|---|
 | GRPO training data | [SidditaVarma/blackstart-city-grpo](https://huggingface.co/SidditaVarma/blackstart-city-grpo) |
 | SFT training data (latest) | [Built-different/latest](https://huggingface.co/spaces/SidditaVarma/Built-different/tree/main/latest) |
-| 🤗 HF Space (live env) | [Coming soon] |
-| ▶️ Demo video (<2 min) | [Coming soon] |
+| 🤗 HF Space (live env) | [ankit944/blackstart-city](https://huggingface.co/spaces/ankit944/blackstart-city) |
 | 📓 Colab notebook | notebooks/blackstart_city_training_colab.ipynb |
 | 📊 Reward curves | artifacts/reward_curves.png |
 

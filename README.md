@@ -16,9 +16,8 @@ short_description: RL benchmark — restore a city after a cascading blackout
 
 ### *Can an LLM learn who gets power first when lives are on the line?*
 
-[![OpenEnv](https://img.shields.io/badge/OpenEnv-compliant-22c55e?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTEzIDJMMyAxNGgxMGwtMSA4IDEwLTEySDF3bC0xLTh6Ii8+PC9zdmc+)](https://huggingface.co/spaces/YOUR_HF_SPACE)
-[![HF Space](https://img.shields.io/badge/🤗_Space-Live_Demo-0ea5e9?style=for-the-badge)](https://huggingface.co/spaces/YOUR_HF_SPACE)
-[![YouTube](https://img.shields.io/badge/▶️_Video-2_min_demo-ef4444?style=for-the-badge)](https://youtube.com/YOUR_VIDEO)
+[![OpenEnv](https://img.shields.io/badge/OpenEnv-compliant-22c55e?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTEzIDJMMyAxNGgxMGwtMSA4IDEwLTEySDF3bC0xLTh6Ii8+PC9zdmc+)](https://huggingface.co/spaces/ankit944/blackstart-city)
+[![HF Space](https://img.shields.io/badge/🤗_Space-Live_Demo-0ea5e9?style=for-the-badge)](https://huggingface.co/spaces/ankit944/blackstart-city)
 [![Blog](https://img.shields.io/badge/📝_HF_Blog-Mini_Post-f59e0b?style=for-the-badge)](https://huggingface.co/blog/YOUR_POST)
 [![License](https://img.shields.io/badge/license-MIT-6366f1?style=for-the-badge)](LICENSE)
 
@@ -389,6 +388,17 @@ xychart-beta
 | News-reactive actions | 0 % | 20 % | **71 %** |
 | Re-collapse rate | 60 % | 35 % | **12 %** |
 | Correct first action | 20 % | 72 % | **91 %** |
+
+### Before & After Training
+
+<div align="center">
+
+| Before Training | After Training |
+|:-:|:-:|
+| ![Before training — early reward oscillation, constraint violations](assets/before_training.png) | ![After training — reward stabilised, constraints respected](assets/after_training.png) |
+| *Step ~50 · reward oscillating, format failures* | *Step ~300 · reward stable, 0 format errors* |
+
+</div>
 
 ### GRPO Reward Curves
 
