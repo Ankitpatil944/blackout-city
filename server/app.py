@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from blackstart_city.baseline import choose_greedy_action, choose_heuristic_action, run_policy_rollout
@@ -72,6 +72,11 @@ class CompareRequest(BaseModel):
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "healthy"}
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def root():
+    return RedirectResponse(url="/web")
 
 
 @app.get("/tasks")
