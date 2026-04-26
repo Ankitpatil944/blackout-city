@@ -7,7 +7,7 @@ COPY blackstart_city ./blackstart_city
 COPY server ./server
 COPY inference.py client.py models.py ./
 
-RUN pip install --no-cache-dir -e ".[dev,train]"
+RUN pip install --no-cache-dir -e "."
 
 ENV PYTHONUNBUFFERED=1
 ENV ENABLE_WEB_INTERFACE=true

@@ -1204,16 +1204,16 @@ def render_web_ui() -> str:
           } else if (c.constraint_type === 'conditional_limit') {
             detail = `<code>${c.limit_target_id}</code> ≤ ${c.limit_mw} MW until ${c.condition_field} > ${c.condition_threshold}`;
           }
-          return \`
+          return `
             <div class="item">
               <div class="item-line">
-                <strong>\${c.id}</strong>
-                <span class="tag \${kind}">\${statusLabel}</span>
+                <strong>${c.id}</strong>
+                <span class="tag ${kind}">${statusLabel}</span>
               </div>
-              <div class="small">\${c.text}</div>
-              <div class="small mono" style="margin-top:0.3rem;">\${detail}</div>
+              <div class="small">${c.text}</div>
+              <div class="small mono" style="margin-top:0.3rem;">${detail}</div>
             </div>
-          \`;
+          `;
         }).join('');
       }
 
@@ -1226,19 +1226,19 @@ def render_web_ui() -> str:
         container.innerHTML = events.map(ev => {
           const kind = ev.impact_level === 'critical' ? 'danger' : ev.impact_level === 'warning' ? 'warn' : 'safe';
           const extras = [];
-          if (ev.reduces_backup_node) extras.push(\`Backup drain: \${ev.reduces_backup_node} -\${ev.reduces_backup_by} min\`);
-          if (ev.activates_constraint_id) extras.push(\`Activates constraint: \${ev.activates_constraint_id}\`);
-          if (ev.public_trust_delta && ev.public_trust_delta !== 0) extras.push(\`Public trust: \${ev.public_trust_delta > 0 ? '+' : ''}\${ev.public_trust_delta.toFixed(2)}\`);
-          return \`
+          if (ev.reduces_backup_node) extras.push(`Backup drain: ${ev.reduces_backup_node} -${ev.reduces_backup_by} min`);
+          if (ev.activates_constraint_id) extras.push(`Activates constraint: ${ev.activates_constraint_id}`);
+          if (ev.public_trust_delta && ev.public_trust_delta !== 0) extras.push(`Public trust: ${ev.public_trust_delta > 0 ? '+' : ''}${ev.public_trust_delta.toFixed(2)}`);
+          return `
             <div class="item">
               <div class="item-line">
-                <strong>\${ev.headline}</strong>
-                <span class="tag \${kind}">\${ev.impact_level}</span>
+                <strong>${ev.headline}</strong>
+                <span class="tag ${kind}">${ev.impact_level}</span>
               </div>
-              <div class="small">\${ev.detail}</div>
-              \${extras.length ? \`<div class="small mono" style="margin-top:0.3rem;">\${extras.join(' | ')}</div>\` : ''}
+              <div class="small">${ev.detail}</div>
+              ${extras.length ? `<div class="small mono" style="margin-top:0.3rem;">${extras.join(' | ')}</div>` : ''}
             </div>
-          \`;
+          `;
         }).join('');
       }
 
