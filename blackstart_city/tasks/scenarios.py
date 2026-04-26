@@ -1083,7 +1083,7 @@ SCENARIO_FAMILIES = {
             title="Mega Cascade — Dual Hospital Crisis",
             task=CityTaskSpec(
                 task_id="mega_cascade",
-                difficulty=DifficultyLevel.HARD,
+                difficulty=DifficultyLevel.EXTREME,
                 description=(
                     "Two hospitals share one substation feeder. Conflicting city-council orders. "
                     "Battery backup starts at 8 minutes. A school-zone downed line must never be energized."
@@ -1293,7 +1293,7 @@ SCENARIO_FAMILIES = {
             title="Mega Cascade — Chemical District Crisis",
             task=CityTaskSpec(
                 task_id="mega_cascade",
-                difficulty=DifficultyLevel.HARD,
+                difficulty=DifficultyLevel.EXTREME,
                 description=(
                     "Chemical district blackout with two hospitals on separate feeders. "
                     "Toxic-spill zone line permanently forbidden. Water plant must come before any residential load."
@@ -1504,7 +1504,7 @@ SCENARIO_FAMILIES = {
             title="Mega Cascade — Coastal Storm Flooding",
             task=CityTaskSpec(
                 task_id="mega_cascade",
-                difficulty=DifficultyLevel.HARD,
+                difficulty=DifficultyLevel.EXTREME,
                 description=(
                     "Coastal storm with three hospitals across two islands. "
                     "Flooded substation crossing permanently forbidden. Tight reserve under storm-degraded generation."

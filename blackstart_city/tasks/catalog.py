@@ -28,7 +28,7 @@ TASK_SPECS = {
     ),
     "mega_cascade": CityTaskSpec(
         task_id="mega_cascade",
-        difficulty=DifficultyLevel.HARD,
+        difficulty=DifficultyLevel.EXTREME,
         description=(
             "Extreme: two hospitals share one substation, conflicting council orders, "
             "8-minute backup start, school-zone downed line forbidden."

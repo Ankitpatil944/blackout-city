@@ -66,6 +66,9 @@ class BlackstartCityEnv:
         self._task_counters[selected] += 1
         self._scenario = get_scenario(selected, seed=seed, episode_index=episode_index)
         max_steps = self._max_steps_override or self._scenario.task.max_steps
+        # Failure contexts are episode-local — a fresh reset must not leak
+        # the previous tier's failure history into the new scenario.
+        self._failure_history = []
 
         self._state = BlackstartState.model_validate({
             "incident_id": self._scenario.incident_id,
@@ -396,6 +399,7 @@ class BlackstartCityEnv:
         previous = score_status_update(state.published_status, scenario, state)
         current = score_status_update(action.status_update, scenario, state)
         state.published_status = action.status_update
+        state.published_status_step = state.step_count
         communication_reward = max(0.0, current - previous)
         penalty = 0.0 if current >= previous else 0.03
         return "Published public recovery status.", 0.0, 0.0, 0.0, 0.0, communication_reward, penalty
@@ -485,9 +489,15 @@ class BlackstartCityEnv:
                 from_energized = line.from_bus in energized_buses or self._generator_bus_online(line.from_bus)
                 to_energized = line.to_bus in energized_buses or self._generator_bus_online(line.to_bus)
                 if from_energized or to_energized:
-                    downstream = self._bus_connected_load(line.to_bus) + self._bus_connected_load(line.from_bus)
-                    line.current_flow_mw = min(line.capacity_mw, downstream)
-                    if downstream > line.capacity_mw:
+                    # Power flows from the energized side toward the load side.
+                    # Use whichever end carries load — taking the SUM of both
+                    # double-counts demand that crosses the line only once.
+                    flow = max(
+                        self._bus_connected_load(line.to_bus),
+                        self._bus_connected_load(line.from_bus),
+                    )
+                    line.current_flow_mw = min(line.capacity_mw, flow)
+                    if flow > line.capacity_mw:
                         line.tripped = True
                         line.closed = False
                         self._destabilize(line.to_bus)
@@ -633,17 +643,16 @@ class BlackstartCityEnv:
             allowed.append(ActionType.RESTORE_ZONE)
         if any(z.restored_pct > 0 for z in state.zones):
             allowed.append(ActionType.SHED_ZONE)
-        # SYNC_ISLANDS is only meaningful for tie-lines connecting substations in different islands
-        tie_lines = [
-            line for line in state.lines
-            if not line.closed and not line.tripped
-            and line.from_bus in {s.id for s in state.substations}
-            and line.to_bus in {s.id for s in state.substations}
-            and any(s.id == line.from_bus and s.island_id != next(
-                (t.island_id for t in state.substations if t.id == line.to_bus), s.island_id
-            ) for s in state.substations)
-        ]
-        if tie_lines:
+        # SYNC_ISLANDS is only meaningful for an open tie-line whose two end
+        # substations sit on different islands.
+        island_by_sub = {s.id: s.island_id for s in state.substations}
+        if any(
+            (not line.closed and not line.tripped)
+            and line.from_bus in island_by_sub
+            and line.to_bus in island_by_sub
+            and island_by_sub[line.from_bus] != island_by_sub[line.to_bus]
+            for line in state.lines
+        ):
             allowed.append(ActionType.SYNC_ISLANDS)
         if any(not g.online for g in state.generators if not g.blackstart_capable):
             allowed.append(ActionType.ACTIVATE_BATTERY_SUPPORT)

@@ -40,6 +40,14 @@ def _make_bad_action() -> BlackstartAction:
     return BlackstartAction(action_type=ActionType.START_GENERATOR, target_id="NONEXISTENT_GEN")
 
 
+def _make_bad_close_action(observation) -> BlackstartAction | None:
+    """Return a damaged-but-uninspected close_line action if any exist."""
+    for line in observation.lines:
+        if line.damaged and not line.inspected:
+            return BlackstartAction(action_type=ActionType.CLOSE_LINE, target_id=line.id)
+    return None
+
+
 def observation_to_prompt(observation, failed_actions: list[dict] | None = None) -> str:
     """Serialise a BlackstartObservation to a JSON string.
 
@@ -108,7 +116,26 @@ def build_dataset(output_path: str = "dataset.jsonl", episodes_per_task: int = 2
                             {"action_type": bad.action_type.value, "target_id": bad.target_id}
                         )
 
+                # Schedule a mid-episode anti-pattern injection (close a damaged
+                # uninspected line) on alternate episodes — this populates
+                # failure_context for the second half of the episode without
+                # ever writing the bad action as a training target.
+                mid_inject_step = 3 if seed % 2 == 0 else None
+                step_count_in_episode = 0
+
                 while not observation.done:
+                    if mid_inject_step is not None and step_count_in_episode == mid_inject_step:
+                        bad = _make_bad_close_action(observation) or _make_bad_action()
+                        observation, _, _, _ = env.step(bad)
+                        if observation.last_action_error or _is_error_result(observation.last_action_result):
+                            failed_actions.append(
+                                {"action_type": bad.action_type.value, "target_id": bad.target_id}
+                            )
+                        mid_inject_step = None
+                        step_count_in_episode += 1
+                        if observation.done:
+                            break
+
                     action = choose_heuristic_action(
                         observation,
                         published_status=published,
@@ -133,6 +160,7 @@ def build_dataset(output_path: str = "dataset.jsonl", episodes_per_task: int = 2
                     handle.write(json.dumps(record) + "\n")
 
                     observation, _, done, _ = env.step(action)
+                    step_count_in_episode += 1
 
                     # Detect both hard errors (constraint violations) and soft
                     # errors (bad target, already-online asset, etc.).

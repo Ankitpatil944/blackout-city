@@ -268,23 +268,32 @@ flowchart LR
         SFT["🎓 Supervised Fine-Tuning<br/>Qwen 2.5-3B · 4-bit · LoRA r=16<br/>Teaches JSON schema + action syntax"]
     end
 
-    subgraph STAGE2 ["Stage 2 — GRPO (200 steps)"]
-        D2["5 Reward Signals"]
-        GRPO["🧠 Group Relative Policy Optimization<br/>DeepSeek R1 algorithm<br/>num_generations=4 · lr=5e-6"]
-        
-        R1["🟣 Format (0.1)<br/>Valid JSON gate"]
-        R2["🔵 Alignment (0.5)<br/>Matches command center"]
-        R3["🟢 Quality (0.4)<br/>Tactical prioritization"]
+    subgraph STAGE2 ["Stage 2 — GRPO (500 steps)"]
+        D2["6 Reward Signals"]
+        GRPO["🧠 Group Relative Policy Optimization<br/>DeepSeek R1 algorithm<br/>num_generations=8 · lr=5e-6"]
+
+        R0["⚪ Env Step (0.30)<br/>Ground-truth env reward"]
+        R1["🟣 Format (0.14)<br/>Valid JSON gate"]
+        R2["🔵 Alignment (0.14)<br/>Matches command center"]
+        R3["🟢 Tactical (0.14)<br/>Triages by urgency"]
+        R4["🟡 Constraint (0.14)<br/>Honors active rules"]
+        R5["🔴 Failure-ctx (0.14)<br/>Avoids repeat mistakes"]
     end
 
     D1 --> SFT
     SFT -->|"saved checkpoint"| GRPO
+    D2 --> R0
     D2 --> R1
     D2 --> R2
     D2 --> R3
+    D2 --> R4
+    D2 --> R5
+    R0 --> GRPO
     R1 --> GRPO
     R2 --> GRPO
     R3 --> GRPO
+    R4 --> GRPO
+    R5 --> GRPO
 
     GRPO --> MODEL["✅ Trained Model<br/>artifacts/blackstart-city-grpo"]
 
@@ -305,12 +314,19 @@ flowchart LR
 
 ### Reward Architecture
 
+The GRPO trainer combines **six reward signals**. The env-step reward is the ground-truth signal (the actual environment reward for the proposed action) and gets the largest weight; the five proxy signals share the rest equally so no single proxy dominates the gradient.
+
 ```mermaid
 pie title GRPO Reward Weight Distribution
-    "Alignment — matches command center" : 50
-    "Quality — tactical prioritization" : 40
-    "Format — valid JSON gate" : 10
+    "Env Step — ground-truth env reward" : 30
+    "Format — valid JSON gate" : 14
+    "Alignment — matches command center" : 14
+    "Tactical Quality — triage urgency" : 14
+    "Constraint — honors active rules" : 14
+    "Failure Context — avoids repeats" : 14
 ```
+
+Weights are defined in `blackstart_city/training/grpo_train.py` as `REWARD_WEIGHTS = [0.30, 0.14, 0.14, 0.14, 0.14, 0.14]`.
 
 ---
 
@@ -344,22 +360,31 @@ Quality Reward   ─────────────────────
 
 ## 🔬 Scoring Formula
 
+The objective score is a weighted sum of six grid-state ratios plus a hospital-speed bonus and unresolved-critical penalty. Defined in `blackstart_city/grading.py:compute_final_score`:
+
 ```python
 final_score = (
-    0.30 * critical_load_restoration   # hospitals, water, telecom, emergency
-  + 0.22 * total_load_restoration      # residential and industrial zones
-  + 0.22 * stability_score             # frequency, reserve margin, no catastrophe
-  + 0.10 * inspection_ratio            # found and handled hidden damage
-  + 0.08 * speed_efficiency            # resolved faster = higher score
-  + 0.08 * communication_score         # published accurate status update
-  - 0.03 * unresolved_critical_ratio   # penalty for unpowered critical nodes
-  - failure_penalty                    # −0.03 per failed critical node
+    0.28 * critical_ratio          # population_impact-weighted critical service restoration
+  + 0.20 * load_ratio              # zone demand restored / total demand
+  + 0.22 * stability               # 1.0 minus frequency / catastrophe penalties
+  + 0.10 * inspection_ratio        # damaged lines inspected before energizing
+  + 0.08 * efficiency_ratio        # 1 − (step_count / max_steps)
+  + 0.08 * communication           # status_update score (decays after publish)
+  + 0.04 * public_trust            # command-center trust signal
+  + 0.04 * coordination_score      # command-center coordination signal
+  + hospital_speed_bonus           # up to +0.08 for restoring hospitals while backup remains
+  - 0.03 * unresolved_critical_ratio
+  - failure_penalty                # 0.03 per failed critical node, capped at 0.18
 )
 
-# Hard penalties
-- 0.45  if catastrophe_triggered        # second blackout
-- 0.25  if catastrophe_penalty fired    # cascade from unsafe action
+# Hard stability penalties (subtracted INSIDE stability, not on top of score)
+stability -= 0.15  if frequency_hz < 59.7
+stability -= 0.20  if frequency_hz < 59.5     # cascade approach
+stability -= 0.30  if frequency_hz < 59.2     # near second collapse
+stability -= 0.45  if catastrophe_triggered   # second blackout fired
 ```
+
+The score is clamped to `[0.01, 0.99]`. Per-step shaped rewards (critical-restore, load-restore, stability, inspection, communication, arbitration) are added on top during `env.step()` and contribute to the per-step reward signal alongside `score_delta`.
 
 ---
 
@@ -396,29 +421,31 @@ python -m blackstart_city.training.trl_train \
   --max-steps 50 \
   --output-dir artifacts/sft
 
-# Phase 2 — GRPO with 5 reward signals (~3 hrs on T4)
+# Phase 2 — GRPO with 6 reward signals (~3 hrs on A10G / T4)
 python -m blackstart_city.training.grpo_train \
   --model-name artifacts/sft \
-  --max-steps 200 \
+  --max-steps 500 \
   --output-dir artifacts/blackstart-city-grpo
 ```
 
-See [`notebooks/blackstart_city_training_colab.ipynb`](notebooks/blackstart_city_training_colab.ipynb) for full Colab walkthrough.
+See [`notebooks/grpo_from_sft.ipynb`](notebooks/grpo_from_sft.ipynb) for the full Colab walkthrough (SFT → GRPO → push to HF).
 
 ---
 
 ## ✅ OpenEnv Compliance
 
-| Requirement | Status |
-|-------------|--------|
-| Extends `OpenEnvAction`, `OpenEnvObservation`, `OpenEnvState` | ✅ |
-| Standard `reset()` / `step()` / `state` / `close()` API | ✅ |
-| Valid `openenv.yaml` manifest | ✅ |
-| FastAPI server at `server/app.py` | ✅ |
-| `/grader` endpoint with rubric scores | ✅ |
-| Minimal training script (Unsloth + TRL) | ✅ |
-| HuggingFace blog post | ✅ |
-| Demo video < 2 minutes | ✅ |
+| Requirement | Status | Where |
+|-------------|--------|-------|
+| Extends `OpenEnvAction`, `OpenEnvObservation`, `OpenEnvState` | ✅ | `blackstart_city/models.py` (hard import — no silent fallback) |
+| Standard `reset()` / `step()` / `state` / `close()` API | ✅ | `blackstart_city/env.py` |
+| Valid `openenv.yaml` manifest | ✅ | `openenv.yaml` (4 tasks: easy / medium / hard / extreme) |
+| FastAPI server | ✅ | `server/app.py` |
+| `/grader` endpoint with rubric scores | ✅ | `server/app.py:/grader` |
+| Minimal training script (Unsloth + TRL) | ✅ | `blackstart_city/training/grpo_train.py` |
+| Colab notebook | ✅ | `notebooks/grpo_from_sft.ipynb` |
+| Hosted on HuggingFace Spaces | ⚙️ See [link below](#-links) | requires Space to be running |
+| HuggingFace blog post | ⚙️ See [link below](#-links) | published from `docs/hf_mini_blog.md` |
+| Demo video < 2 minutes | ⚙️ See [link below](#-links) | recorded from `docs/video_script.md` |
 
 ---
 
@@ -426,21 +453,29 @@ See [`notebooks/blackstart_city_training_colab.ipynb`](notebooks/blackstart_city
 
 ```
 blackstart_city/
-├── env.py                    # Core RL environment — 500 lines of physics
-├── models.py                 # All Pydantic state/action/observation types
-├── grading.py                # Objective scoring formula
-├── heuristic.py              # Greedy + heuristic baselines + rollout runner
+├── env.py                    # Core RL environment — physics, dynamics, catastrophe gate
+├── models.py                 # Pydantic state/action/observation/constraint types
+├── grading.py                # Objective scoring formula + 4-axis rubric
+├── baseline.py               # Greedy + heuristic baselines (Dijkstra-based)
+├── command_center.py         # Role recommendations, coordination, arbitration
+├── agent_tier.py             # 3-tier cascade: Greedy → Heuristic → GRPO LLM
 ├── tasks/
-│   └── catalog.py            # 4 difficulty tiers, 10+ scenarios
+│   ├── catalog.py            # 4 difficulty tiers + procedural variation
+│   └── scenarios.py          # Scenario families per tier
 ├── training/
 │   ├── trl_train.py          # Stage 1 — SFT via Unsloth
-│   ├── grpo_train.py         # Stage 2 — GRPO with 5 reward signals
-│   ├── build_dataset.py      # Generates dataset.jsonl from heuristic rollouts
-│   └── model_utils.py        # parse_action_text + schema validation
-├── server/
-│   └── app.py                # FastAPI OpenEnv server
-└── notebooks/
-    └── blackstart_city_training_colab.ipynb
+│   ├── grpo_train.py         # Stage 2 — GRPO with 6 reward signals
+│   ├── build_dataset.py      # dataset.jsonl from heuristic rollouts + failure injection
+│   ├── model_utils.py        # parse_action_text + prompt builder
+│   ├── policy.py             # ModelPolicy wrapper around HF transformers + PEFT
+│   └── eval.py               # Heuristic-vs-trained comparison runner
+└── server/
+    ├── app.py                # FastAPI OpenEnv server
+    └── web_ui.py             # Live HTML grid dashboard
+
+notebooks/
+├── grpo_from_sft.ipynb       # Colab — SFT → GRPO end-to-end (canonical training notebook)
+└── agent_demo.ipynb          # Colab — runs the trained agent across all 4 tiers
 ```
 
 ---
@@ -452,7 +487,7 @@ blackstart_city/
 | 🤗 HF Space (live environment) | https://huggingface.co/spaces/YOUR_HF_SPACE |
 | ▶️ Demo video (< 2 min) | https://youtube.com/YOUR_VIDEO |
 | 📝 HF Blog post | https://huggingface.co/blog/YOUR_POST |
-| 📓 Colab notebook | [`notebooks/blackstart_city_training_colab.ipynb`](notebooks/blackstart_city_training_colab.ipynb) |
+| 📓 Colab notebook | [`notebooks/grpo_from_sft.ipynb`](notebooks/grpo_from_sft.ipynb) |
 | 📊 Reward curves | `artifacts/reward_comparison.png` |
 
 ---

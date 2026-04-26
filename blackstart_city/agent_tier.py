@@ -93,27 +93,87 @@ def _fallback_status():
 
 class LLMPolicy:
     """
-    Stub LLM policy.  Swap `act()` body for real model inference.
-    The observation dict already contains `failure_context` if previous
-    tiers failed — the LLM receives that context automatically.
+    GRPO-trained LLM policy (Tier 2).
+
+    Loads the trained Qwen + LoRA adapter via `ModelPolicy` and uses real
+    generation to choose actions. Resolution order for the model path:
+
+      1. explicit `model_path` arg passed to the constructor, or
+      2. `BLACKSTART_LLM_MODEL_PATH` environment variable, or
+      3. `artifacts/blackstart-city-grpo` if it exists locally.
+
+    If none resolve, the policy logs a warning and degrades to the
+    `HeuristicPolicy` so the cascade still completes — but a flag is set
+    so callers can detect that the LLM tier was skipped.
     """
 
     name: str = "LLMPolicy"
 
-    def act(self, observation: Dict[str, Any]) -> BlackstartAction:
-        """
-        Stub LLM policy. Access failure contexts from previous tiers via:
-        observation.get("failure_context", [])
-        """
-        # ── Real implementation (replace stub below) ──────────────────────────
-        # from blackstart_city.training.policy import call_llm
-        # return call_llm(observation)
-        # ─────────────────────────────────────────────────────────────────────
+    def __init__(self, model_path: str | None = None, base_model: str | None = None):
+        import os
+        from pathlib import Path
 
-        # Stub: re-use HeuristicPolicy as a placeholder so the code runs
-        # without GPU/API access during development.
-        hp = HeuristicPolicy()
-        return hp.act(observation)
+        self._published = False
+        self._seen_signatures: set[str] = set()
+        self._inner = None
+        self._fallback_reason: str | None = None
+
+        resolved_path = (
+            model_path
+            or os.getenv("BLACKSTART_LLM_MODEL_PATH")
+            or ("artifacts/blackstart-city-grpo"
+                if Path("artifacts/blackstart-city-grpo").exists() else None)
+        )
+        resolved_base = base_model or os.getenv("BLACKSTART_LLM_BASE_MODEL")
+
+        if resolved_path is None:
+            self._fallback_reason = (
+                "no LLM checkpoint configured (set BLACKSTART_LLM_MODEL_PATH "
+                "or pass model_path=)"
+            )
+            return
+
+        try:
+            from blackstart_city.training.policy import ModelPolicy
+            self._inner = ModelPolicy(
+                model_name_or_path=resolved_path,
+                base_model_name=resolved_base,
+            )
+        except Exception as exc:
+            self._fallback_reason = f"failed to load LLM ({type(exc).__name__}: {exc})"
+            self._inner = None
+
+    @property
+    def used_fallback(self) -> bool:
+        return self._inner is None
+
+    def act(self, observation) -> BlackstartAction:
+        obs = _to_observation(observation)
+
+        if self._inner is None:
+            action = choose_heuristic_action(
+                obs,
+                published_status=self._published,
+                seen_signatures=self._seen_signatures,
+            )
+        else:
+            action = self._inner.choose(
+                obs,
+                published_status=self._published,
+                seen_signatures=self._seen_signatures,
+            )
+
+        if action is None:
+            action = BlackstartAction(
+                action_type=ActionType.PUBLISH_STATUS,
+                status_update=_fallback_status(),
+            )
+
+        sig = f"{action.action_type.value}|{action.target_id or ''}|{action.requested_mw or 0}"
+        self._seen_signatures.add(sig)
+        if action.action_type == ActionType.PUBLISH_STATUS:
+            self._published = True
+        return action
 
 
 # ─────────────────────────────────────────────────────────────────────────────

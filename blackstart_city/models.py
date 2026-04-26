@@ -5,39 +5,19 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-try:
-    from openenv.core.env_server.types import Action as OpenEnvAction
-    from openenv.core.env_server.types import Observation as OpenEnvObservation
-    from openenv.core.env_server.types import State as OpenEnvState
-except ImportError:  # pragma: no cover
-    class OpenEnvAction(BaseModel):
-        model_config = ConfigDict(
-            extra="forbid",
-            arbitrary_types_allowed=True,
-            revalidate_instances="never"
-        )
-
-    class OpenEnvObservation(BaseModel):
-        reward: float = 0.0
-        done: bool = False
-        model_config = ConfigDict(
-            extra="forbid",
-            arbitrary_types_allowed=True,
-            revalidate_instances="never"
-        )
-
-    class OpenEnvState(BaseModel):
-        model_config = ConfigDict(
-            extra="forbid",
-            arbitrary_types_allowed=True,
-            revalidate_instances="never"
-        )
+# Hard import: this environment is OpenEnv-compliant by contract. A silent
+# fallback would let the server start and lie about compliance to judges.
+# If openenv-core is missing, fail loud at import time.
+from openenv.core.env_server.types import Action as OpenEnvAction
+from openenv.core.env_server.types import Observation as OpenEnvObservation
+from openenv.core.env_server.types import State as OpenEnvState
 
 
 class DifficultyLevel(str, Enum):
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
+    EXTREME = "extreme"
 
 
 class AssetHealth(str, Enum):
@@ -464,6 +444,7 @@ class BlackstartState(OpenEnvState):
     last_action_result: Optional[str] = None
     last_action_error: Optional[str] = None
     published_status: Optional[StatusUpdate] = None
+    published_status_step: Optional[int] = None
     action_history: list[str] = Field(default_factory=list)
     score: float = 0.01
     reward_breakdown: RewardBreakdown = Field(default_factory=RewardBreakdown)

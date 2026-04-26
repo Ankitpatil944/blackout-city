@@ -13,10 +13,15 @@ PatchFastRL("GRPO", FastLanguageModel)
 from trl import GRPOConfig, GRPOTrainer
 from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 from blackstart_city.training.model_utils import parse_action_text
+from blackstart_city.training.build_dataset import observation_to_prompt
 from blackstart_city.env import BlackstartCityEnv
-from blackstart_city.models import Constraint
+from blackstart_city.models import (
+    ActionType,
+    BlackstartAction,
+    Constraint,
+    StatusUpdate,
+)
 from blackstart_city.tasks.catalog import TASK_ORDER
-from blackstart_city.baseline import choose_heuristic_action
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -242,7 +247,13 @@ def format_reward_func(completions, **kwargs) -> list[float]:
 
 
 def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
-    """Rewards alignment with command center agent recommendations."""
+    """Rewards alignment with command-center role recommendations.
+
+    When the obs has no recommendations (rare — build_dataset always emits
+    them), reward is 0. We deliberately do NOT add a heuristic proxy here:
+    a proxy would conflict with the constraint and action_quality signals
+    and add noise to the learning signal.
+    """
     rewards = []
     for prompt, comp in zip(prompts, completions):
         try:
@@ -253,51 +264,21 @@ def alignment_reward_func(prompts, completions, **kwargs) -> list[float]:
             action = parse_action_text(comp_text)
 
             if action is None:
-                partial = 0.0
-                critical_ids = [n["id"] for n in obs.get("critical_nodes", [])]
-                gen_ids = [g["id"] for g in obs.get("generators", [])]
-                for cid in critical_ids:
-                    if cid in comp_text:
-                        partial += 0.05
-                for gid in gen_ids:
-                    if gid in comp_text:
-                        partial += 0.05
-                rewards.append(min(partial, 0.2) - 0.2)
+                rewards.append(-0.2)
+                continue
+
+            recs = obs.get("command_center", {}).get("role_recommendations", [])
+            if not recs:
+                rewards.append(0.0)
                 continue
 
             reward = 0.0
-            recs = obs.get("command_center", {}).get("role_recommendations", [])
-
-            if recs:
-                for rec in recs:
-                    rec_action = rec.get("proposed_action")
-                    if rec_action and rec_action.get("action_type") == action.action_type.value:
-                        if rec_action.get("target_id") == action.target_id:
-                            reward = 1.0
-                            break
-            else:
-                critical_nodes = obs.get("critical_nodes", [])
-                generators = obs.get("generators", [])
-                unpowered_critical_ids = {
-                    n["id"] for n in critical_nodes if not n.get("powered")
-                }
-                online_generators = [g for g in generators if g.get("online")]
-                blackstart_capable_offline = [
-                    g for g in generators
-                    if g.get("blackstart_capable") and not g.get("online")
-                ]
-                if action.target_id in unpowered_critical_ids:
-                    reward = 1.0
-                elif (
-                    not online_generators
-                    and action.action_type.value == "start_generator"
-                    and blackstart_capable_offline
-                    and action.target_id == blackstart_capable_offline[0]["id"]
-                ):
-                    reward = 0.8
-                elif not online_generators and action.action_type.value == "start_generator":
-                    reward = 0.4
-
+            for rec in recs:
+                rec_action = rec.get("proposed_action")
+                if rec_action and rec_action.get("action_type") == action.action_type.value:
+                    if rec_action.get("target_id") == action.target_id:
+                        reward = 1.0
+                        break
             rewards.append(reward)
         except Exception:
             rewards.append(0.0)
@@ -426,8 +407,14 @@ def constraint_reward_func(prompts, completions, **kwargs) -> list[float]:
 
 def failure_context_reward_func(prompts, completions, **kwargs) -> list[float]:
     """
-    ToM Reward: rewards the model for NOT repeating actions that failed in
-    previous tiers (visible in failure_context).
+    Theory-of-Mind reward: rewards the model for NOT repeating actions that
+    failed in previous tiers (visible in `failure_context`).
+
+    When `failure_context` is absent (the dataset only injects failures on
+    every 3rd episode) reward is 0 — there is no signal to give. We
+    intentionally do NOT add a heuristic anti-pattern check here; that
+    overlaps with `constraint_reward_func` and `action_quality_reward_func`
+    and would distort the gradient on most rows.
     """
     rewards = []
     for prompt, comp in zip(prompts, completions):
@@ -439,39 +426,24 @@ def failure_context_reward_func(prompts, completions, **kwargs) -> list[float]:
             action = parse_action_text(comp_text)
 
             if action is None:
-                partial = 0.1 if "failed" in comp_text.lower() else 0.0
-                rewards.append(partial - 0.2)
+                rewards.append(-0.2)
                 continue
 
             failure_ctx = obs_data.get("failure_context", [])
+            if not failure_ctx:
+                rewards.append(0.0)
+                continue
 
-            if failure_ctx:
-                was_failure = False
-                for fail in failure_ctx:
-                    for failed_action in fail.get("failed_actions", []):
-                        if (failed_action.get("action_type") == action.action_type.value
-                                and failed_action.get("target_id") == action.target_id):
-                            was_failure = True
-                            break
-                rewards.append(-1.0 if was_failure else 0.5)
-            else:
-                lines = obs_data.get("lines", [])
-                generators = obs_data.get("generators", [])
-                damaged_line_ids = {l["id"] for l in lines if l.get("damaged") or l.get("tripped")}
-                online_gen_ids = {g["id"] for g in generators if g.get("online")}
-
-                if (
-                    action.action_type.value in ("close_line", "inspect_line")
-                    and action.target_id in damaged_line_ids
-                ):
-                    rewards.append(-0.6)
-                elif (
-                    action.action_type.value == "start_generator"
-                    and action.target_id in online_gen_ids
-                ):
-                    rewards.append(-0.4)
-                else:
-                    rewards.append(0.3)
+            was_failure = False
+            for fail in failure_ctx:
+                for failed_action in fail.get("failed_actions", []):
+                    if (failed_action.get("action_type") == action.action_type.value
+                            and failed_action.get("target_id") == action.target_id):
+                        was_failure = True
+                        break
+                if was_failure:
+                    break
+            rewards.append(-1.0 if was_failure else 0.5)
         except Exception:
             rewards.append(0.0)
     return rewards
@@ -537,20 +509,68 @@ class RichGRPOCallback(TrainerCallback):
             console.print(f"  [dim]{footer}[/dim]\n")
 
 
+_FALLBACK_STATUS = StatusUpdate(
+    summary="Recovery operations are in progress across the grid.",
+    critical_services="Teams are working to restore critical services.",
+    next_action="Continue coordinated restoration efforts.",
+    owner="city restoration commander",
+)
+
+
 class EnvEvalCallback(TrainerCallback):
     """
     Runs held-out evaluation episodes in the live environment every N training
     steps and logs episode-level metrics (score, catastrophe rate, hospital
-    failures) to W&B.  Uses the heuristic oracle as a fixed reference so judges
-    can see the environment is actively connected to training telemetry.
+    failures) to W&B.
+
+    The agent under test is the GRPO-trained model itself: this callback
+    formats the observation with the same prompt template used during
+    training, generates one action, parses it, and steps the env. If the
+    model emits malformed output we fall back to a status publish so the
+    episode keeps running and the failure shows up as a low score.
     """
 
     EVAL_SEED = 999  # held-out seed never seen during dataset construction
 
-    def __init__(self, eval_every: int = 50, n_tasks: int = 2):
+    def __init__(self, eval_every: int = 50, n_tasks: int = 2, max_episode_steps: int = 40):
         self.eval_every = eval_every
         self.n_tasks = n_tasks
+        self.max_episode_steps = max_episode_steps
         self._last_eval_step = -1
+
+    def _generate_action(self, model, tokenizer, obs) -> BlackstartAction:
+        prompt_text = observation_to_prompt(obs)
+        messages = [
+            {"role": "system", "content": (
+                "You are a city blackout restoration policy. "
+                "Return exactly one valid JSON action object and nothing else."
+            )},
+            {"role": "user", "content": "Observation:\n" + prompt_text},
+        ]
+        try:
+            inputs = tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                return_tensors="pt",
+            ).to(model.device)
+            with torch.no_grad():
+                output_ids = model.generate(
+                    inputs,
+                    max_new_tokens=150,
+                    do_sample=False,
+                    pad_token_id=tokenizer.eos_token_id,
+                )
+            generated = output_ids[0][inputs.shape[1]:]
+            text = tokenizer.decode(generated, skip_special_tokens=True)
+            parsed = parse_action_text(text)
+            if parsed is not None:
+                return parsed
+        except Exception as exc:
+            console.print(f"  [dim]eval generate failed: {exc}[/dim]")
+        return BlackstartAction(
+            action_type=ActionType.PUBLISH_STATUS,
+            status_update=_FALLBACK_STATUS,
+        )
 
     def on_log(self, args: TrainingArguments, state: TrainerState,
                control: TrainerControl, logs=None, **kwargs):
@@ -559,25 +579,32 @@ class EnvEvalCallback(TrainerCallback):
             return
         self._last_eval_step = step
 
-        scores, hospital_failures, catastrophes, steps_to_done = [], [], [], []
+        model = kwargs.get("model")
+        tokenizer = kwargs.get("processing_class") or kwargs.get("tokenizer")
+        if model is None or tokenizer is None:
+            return  # No model handle yet — first log fires before training starts
+
+        scores, hospital_failures, catastrophes, steps_to_done, parse_failures = [], [], [], [], []
+
+        try:
+            from unsloth import FastLanguageModel
+            FastLanguageModel.for_inference(model)
+        except Exception:
+            pass
+        model.eval()
 
         for task_id in TASK_ORDER[: self.n_tasks]:
             env = BlackstartCityEnv()
             obs = env.reset(task_id=task_id, seed=self.EVAL_SEED)
-            published = False
-            seen_sigs: set[str] = set()
+            ep_parse_failures = 0
+            ep_step = 0
 
-            while not obs.done:
-                action = choose_heuristic_action(
-                    obs, published_status=published, seen_signatures=seen_sigs
-                )
-                if action is None:
-                    break
-                sig = f"{action.action_type.value}|{action.target_id or ''}|{action.requested_mw or 0}"
-                seen_sigs.add(sig)
+            while not obs.done and ep_step < self.max_episode_steps:
+                action = self._generate_action(model, tokenizer, obs)
+                if action.action_type == ActionType.PUBLISH_STATUS and action.status_update is _FALLBACK_STATUS:
+                    ep_parse_failures += 1
                 obs, _, done, _ = env.step(action)
-                if action.action_type.value == "publish_status":
-                    published = True
+                ep_step += 1
                 if done:
                     break
 
@@ -586,24 +613,35 @@ class EnvEvalCallback(TrainerCallback):
             hospital_failures.append(s.hospital_failures if s else 0)
             catastrophes.append(1 if (s and s.catastrophe_triggered) else 0)
             steps_to_done.append(s.step_count if s else 0)
+            parse_failures.append(ep_parse_failures)
+
+        # Restore training mode so the next training step is unaffected
+        try:
+            from unsloth import FastLanguageModel
+            FastLanguageModel.for_training(model)
+        except Exception:
+            pass
+        model.train()
 
         try:
             import wandb
             if wandb.run is not None:
                 wandb.log(
                     {
-                        "eval/heuristic_score_mean":       sum(scores) / len(scores),
-                        "eval/heuristic_score_min":        min(scores),
-                        "eval/hospital_failures_mean":     sum(hospital_failures) / len(hospital_failures),
-                        "eval/catastrophe_rate":           sum(catastrophes) / len(catastrophes),
-                        "eval/steps_to_done_mean":         sum(steps_to_done) / len(steps_to_done),
+                        "eval/grpo_score_mean":            sum(scores) / len(scores),
+                        "eval/grpo_score_min":             min(scores),
+                        "eval/grpo_hospital_failures":     sum(hospital_failures) / len(hospital_failures),
+                        "eval/grpo_catastrophe_rate":      sum(catastrophes) / len(catastrophes),
+                        "eval/grpo_steps_to_done":         sum(steps_to_done) / len(steps_to_done),
+                        "eval/grpo_parse_failures":        sum(parse_failures) / len(parse_failures),
                     },
                     step=step,
                 )
                 console.print(
                     f"  [bold #00FFCC]EnvEval[/] step={step}  "
-                    f"score={sum(scores)/len(scores):.3f}  "
-                    f"catastrophe_rate={sum(catastrophes)/len(catastrophes):.1f}\n"
+                    f"grpo_score={sum(scores)/len(scores):.3f}  "
+                    f"catastrophe_rate={sum(catastrophes)/len(catastrophes):.2f}  "
+                    f"parse_failures={sum(parse_failures)/len(parse_failures):.1f}\n"
                 )
         except Exception:
             pass

@@ -19,12 +19,18 @@ RESOURCE_TOTALS = {
     DifficultyLevel.EASY: {"repair_crews": 2, "telecom_units": 1},
     DifficultyLevel.MEDIUM: {"repair_crews": 3, "telecom_units": 1},
     DifficultyLevel.HARD: {"repair_crews": 4, "telecom_units": 2},
+    DifficultyLevel.EXTREME: {"repair_crews": 5, "telecom_units": 2},
 }
 
 
 def initial_command_center(state: BlackstartState) -> CommandCenterState:
     unresolved = _unresolved_services(state)
-    trust = 0.62 if state.difficulty == DifficultyLevel.EASY else 0.58 if state.difficulty == DifficultyLevel.MEDIUM else 0.54
+    trust = (
+        0.62 if state.difficulty == DifficultyLevel.EASY
+        else 0.58 if state.difficulty == DifficultyLevel.MEDIUM
+        else 0.54 if state.difficulty == DifficultyLevel.HARD
+        else 0.50  # EXTREME — public starts with even less trust
+    )
     snapshot = CommandCenterState(
         public_trust=trust,
         coordination_score=0.56,

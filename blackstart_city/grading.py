@@ -59,9 +59,13 @@ def compute_final_score(state: BlackstartState, scenario: Scenario) -> float:
         stability -= 0.20  # approaching cascade threshold
     if state.frequency_hz < 59.2:
         stability -= 0.30  # severe; near second collapse
-    stability -= min(0.3, state.cumulative_penalty)
     if state.catastrophe_triggered:
         stability -= 0.45
+    # Note: state.cumulative_penalty is intentionally NOT subtracted here.
+    # action_penalty is already deducted from per-step reward in env.step(),
+    # and using it again here would re-charge it through every future
+    # score_delta. cumulative_penalty still informs RubricScore.safety, which
+    # is the right place for a long-horizon discipline signal.
     stability = max(0.0, stability)
 
     damaged = [line for line in state.lines if line.damaged]
@@ -75,6 +79,12 @@ def compute_final_score(state: BlackstartState, scenario: Scenario) -> float:
     efficiency_ratio = max(0.0, 1.0 - (state.step_count / state.max_steps))
 
     communication = score_status_update(state.published_status, scenario, state) / 0.12
+    # Communication value decays after publish — a status update from 6 steps
+    # ago does not represent the current grid. ~5-step half-life keeps recent
+    # comms credited while preventing infinite passive reward.
+    if state.published_status is not None and state.published_status_step is not None:
+        steps_since_publish = max(0, state.step_count - state.published_status_step)
+        communication *= max(0.0, 1.0 - 0.10 * steps_since_publish)
     public_trust = state.command_center.public_trust
     coordination = state.command_center.coordination_score
     unresolved_critical_ratio = (
