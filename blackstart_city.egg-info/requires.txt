@@ -13,3 +13,7 @@ peft>=0.11.0
 accelerate>=0.34.0
 transformers>=4.44.0
 trl>=0.10.1
+unsloth[colab-new]>=2024.9.0
+matplotlib>=3.9.0
+numpy>=1.26.0
+rich>=13.0.0

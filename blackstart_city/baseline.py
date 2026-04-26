@@ -134,20 +134,40 @@ def choose_heuristic_action(
 ) -> BlackstartAction | None:
     seen_signatures = seen_signatures or set()
 
+    # 1. Emergency load shed to protect frequency
     if observation.frequency_hz < 59.5:
         shed_candidate = _best_shed_candidate(observation)
         if shed_candidate is not None and not _is_action_blocked(shed_candidate, seen_signatures):
             return shed_candidate
 
+    # 2. Critical node rescue (highest priority)
     rescue_action = _choose_critical_rescue_action(observation, seen_signatures)
     if rescue_action is not None:
         return rescue_action
 
-    if not published_status and _can_resolve_via_publish(observation):
+    # 3. Sync unstable islands early — before zone restore, as islands hurt stability score
+    if observation.unstable_islands > 0:
+        sync_action = _best_sync_action(observation, seen_signatures, min_reserve=4)
+        if sync_action is not None:
+            return sync_action
+        # Inspect damaged lines that are blocking island sync
+        inspect_action = _best_inspection_action(observation, seen_signatures)
+        if inspect_action is not None:
+            return inspect_action
+
+    # 4. Publish once all critical nodes are restored — free +0.09 and don't wait for zone threshold
+    if not published_status and all(n.powered for n in observation.critical_nodes):
         action = _status_action(observation)
         if not _is_action_blocked(action, seen_signatures):
             return action
 
+    # 5. Force publish if near end of episode — never leave this on the table
+    if not published_status and observation.steps_remaining <= 4:
+        action = _status_action(observation)
+        if not _is_action_blocked(action, seen_signatures):
+            return action
+
+    # 6. Zone resolution toward 60% threshold
     zone_action = _choose_zone_resolution_action(observation, seen_signatures)
     if zone_action is not None:
         return zone_action
@@ -156,14 +176,17 @@ def choose_heuristic_action(
     if zone_action is not None:
         return zone_action
 
+    # 7. Inspect damaged lines not yet on a critical path
     inspect_action = _best_inspection_action(observation, seen_signatures)
     if inspect_action is not None:
         return inspect_action
 
+    # 8. Sync any remaining islands (normal conditions)
     sync_action = _best_sync_action(observation, seen_signatures)
     if sync_action is not None:
         return sync_action
 
+    # 9. Fallback publish
     if not published_status:
         action = _status_action(observation)
         if not _is_action_blocked(action, seen_signatures):
@@ -460,8 +483,10 @@ def _best_inspection_action(
 def _best_sync_action(
     observation: BlackstartObservation,
     seen_signatures: set[str],
+    *,
+    min_reserve: int = 6,
 ) -> BlackstartAction | None:
-    if observation.reserve_margin_mw < 6 or observation.frequency_hz < 59.7:
+    if observation.reserve_margin_mw < min_reserve or observation.frequency_hz < 59.5:
         return None
     syncable = [
         line
