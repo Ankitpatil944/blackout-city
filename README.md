@@ -475,7 +475,7 @@ Open `http://localhost:8000` for the interactive web UI — reset scenarios, run
 
 ```bash
 # Phase 1 — SFT warm-up  (~30 min on T4 Colab)
-python -m blackstart_city.training.build_dataset --scenarios all --output dataset.jsonl
+python -m blackstart_city.training.build_dataset   # writes dataset.jsonl
 python -m blackstart_city.training.trl_train \
   --dataset dataset.jsonl --max-steps 50 --output-dir artifacts/sft
 
@@ -526,7 +526,7 @@ flowchart LR
 | Standard `reset()` / `step()` / `state` / `close()` API | ✅ | [`blackstart_city/env.py`](blackstart_city/env.py) |
 | Valid `openenv.yaml` manifest with all task IDs + 4 difficulty tiers | ✅ | [`openenv.yaml`](openenv.yaml) |
 | FastAPI server with `/reset`, `/step`, `/state`, `/grader`, `/manifest` | ✅ | [`server/app.py`](server/app.py) |
-| Client / server separation respected (clients only import models) | ✅ | [`blackstart_city/client.py`](blackstart_city/client.py) |
+| Client / server separation respected (clients only import models) | ✅ | [`blackstart_city/models.py`](blackstart_city/models.py) |
 | No reserved tool names used for MCP tools | ✅ | — |
 | Training script using Unsloth + HF TRL (SFT) | ✅ | [`blackstart_city/training/trl_train.py`](blackstart_city/training/trl_train.py) |
 | Training script using HF TRL (GRPO, 6 reward signals) | ✅ | [`blackstart_city/training/grpo_train.py`](blackstart_city/training/grpo_train.py) |
