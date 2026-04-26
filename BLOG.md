@@ -1,4 +1,4 @@
-# 🌆 BlackSwan: Teaching an LLM to Save a City After a Blackout
+﻿# 🌆 BlackSwan: Teaching an LLM to Save a City After a Blackout
 
 > *"Every minute a hospital runs on backup battery is a minute someone's surgery may fail."*
 
@@ -202,6 +202,8 @@ This means:
 
 | Resource | URL |
 |---|---|
+| GRPO training data | [SidditaVarma/blackstart-city-grpo](https://huggingface.co/SidditaVarma/blackstart-city-grpo) |
+| SFT training data (latest) | [Built-different/latest](https://huggingface.co/spaces/SidditaVarma/Built-different/tree/main/latest) |
 | 🤗 HF Space (live env) | [Coming soon] |
 | ▶️ Demo video (<2 min) | [Coming soon] |
 | 📓 Colab notebook | notebooks/blackstart_city_training_colab.ipynb |

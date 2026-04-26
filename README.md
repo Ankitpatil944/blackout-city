@@ -1,4 +1,4 @@
----
+﻿---
 title: Blackstart City
 emoji: ⚡
 colorFrom: yellow
@@ -588,6 +588,8 @@ artifacts/
 
 | Resource | URL |
 |----------|-----|
+| GRPO training data | [SidditaVarma/blackstart-city-grpo](https://huggingface.co/SidditaVarma/blackstart-city-grpo) |
+| SFT training data (latest) | [Built-different/latest](https://huggingface.co/spaces/SidditaVarma/Built-different/tree/main/latest) |
 | 🤗 HF Space (live environment) | https://huggingface.co/spaces/YOUR_HF_SPACE |
 | ▶️ Demo video (< 2 min) | https://youtube.com/YOUR_VIDEO |
 | 📝 HF Blog post | https://huggingface.co/blog/YOUR_POST |
