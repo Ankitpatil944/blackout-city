@@ -16,4 +16,6 @@ Thumbs.db
 # Binary artifacts — tracked separately, not pushed to HF Space
 *.png
 *.jpg
-*.jpeg
+# Allow the before/after training screenshots
+!artifacts/before_grpo.jpeg
+!artifacts/after_sft_grpo.jpeg

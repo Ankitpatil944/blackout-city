@@ -402,6 +402,11 @@ xychart-beta
 
 ### GRPO Reward Curves
 
+| Before Training | After SFT + GRPO |
+|:-:|:-:|
+| ![Before — reward oscillating, constraint violations](artifacts/before_grpo.jpeg) | ![After — reward stable at +4.5, format locked at 1.0](artifacts/after_sft_grpo.jpeg) |
+| *Reward swings wildly, format errors common* | *+4.5 reward, format reward locked at 1.0* |
+
 > 📊 The full reward dashboard is generated at the end of `grpo_train.py` and saved to `artifacts/blackstart-city-grpo/reward_curves.png`. The curves below are illustrative — the real plot is produced from the `trainer.state.log_history` of an actual run and uploaded to W&B as `charts/reward_dashboard`.
 
 ```mermaid

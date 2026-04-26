@@ -121,7 +121,7 @@ The numbers speak for themselves:
 
 | Before Training | After Training |
 |:-:|:-:|
-| ![Before — reward oscillating, constraint violations at step ~50](assets/before_training.png) | ![After — reward stable, constraints respected at step ~300](assets/after_training.png) |
+| ![Before — reward oscillating, constraint violations at step ~50](artifacts/before_grpo.jpeg) | ![After — reward stable, constraints respected at step ~300](artifacts/after_sft_grpo.jpeg) |
 | *Early training: reward swings wildly, format errors common* | *Late training: +4.5 reward, format reward locked at 1.0* |
 
 GRPO reward climbed from **−0.9 at step 1** (Colab baseline) to **+4.5 at step 300** (final run). Format reward hit **1.0 and stayed there** — the model never outputs invalid JSON after training.
