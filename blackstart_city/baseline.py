@@ -134,11 +134,29 @@ def choose_heuristic_action(
 ) -> BlackstartAction | None:
     seen_signatures = seen_signatures or set()
 
+    # 0. No generators online — go straight to the best blackstart generator;
+    #    batteries require a live system reference and will fail first otherwise.
+    if not any(g.online for g in observation.generators):
+        blackstart_gens = sorted(
+            [g for g in observation.generators if g.blackstart_capable],
+            key=lambda g: (-g.capacity_mw, g.id),
+        )
+        for g in blackstart_gens:
+            action = BlackstartAction(action_type=ActionType.START_GENERATOR, target_id=g.id)
+            if not _is_action_blocked(action, seen_signatures):
+                return action
+
     # 1. Emergency load shed to protect frequency
     if observation.frequency_hz < 59.5:
         shed_candidate = _best_shed_candidate(observation)
         if shed_candidate is not None and not _is_action_blocked(shed_candidate, seen_signatures):
             return shed_candidate
+
+    # 1b. Immediate restore: grab any critical node whose feeder is already energized
+    #     and reserve is sufficient — don't pass it up to keep following a longer path.
+    immediate = _choose_immediate_restore(observation, seen_signatures)
+    if immediate is not None:
+        return immediate
 
     # 2. Critical node rescue (highest priority)
     rescue_action = _choose_critical_rescue_action(observation, seen_signatures)
@@ -199,7 +217,7 @@ def _choose_critical_rescue_action(
     observation: BlackstartObservation,
     seen_signatures: set[str],
 ) -> BlackstartAction | None:
-    best_plan: tuple[tuple[object, ...], dict[str, object]] | None = None
+    all_plans: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     for node in observation.critical_nodes:
         if node.powered:
@@ -208,16 +226,18 @@ def _choose_critical_rescue_action(
         if plan is None:
             continue
         urgency = _critical_urgency_key(node, plan["minutes_to_restore"])
-        if best_plan is None or urgency < best_plan[0]:
-            best_plan = (urgency, plan)
+        all_plans.append((urgency, plan))
 
-    if best_plan is None:
+    if not all_plans:
         return _best_generation_boost(observation, seen_signatures)
 
-    action = best_plan[1]["next_action"]
-    if _is_action_blocked(action, seen_signatures):
-        return None
-    return action
+    all_plans.sort(key=lambda x: x[0])
+    for _, plan in all_plans:
+        action = plan["next_action"]
+        if not _is_action_blocked(action, seen_signatures):
+            return action
+
+    return _best_generation_boost(observation, seen_signatures)
 
 
 def _best_rescue_plan(
@@ -225,8 +245,12 @@ def _best_rescue_plan(
     node: CriticalNodeState,
 ) -> dict[str, object] | None:
     best: tuple[tuple[int, int, int, int], dict[str, object]] | None = None
+    system_online = any(g.online for g in observation.generators)
 
     for generator in observation.generators:
+        # Batteries require a live system reference to activate — skip them if nothing is online yet
+        if not generator.online and not generator.blackstart_capable and not system_online:
+            continue
         activation_minutes = 0 if generator.online else _generator_action_minutes(generator)
         projected_generation = observation.available_generation_mw + (0 if generator.online else generator.capacity_mw)
         projected_reserve = projected_generation - observation.served_load_mw
@@ -449,6 +473,30 @@ def _best_shed_candidate(observation: BlackstartObservation) -> BlackstartAction
     return None
 
 
+def _choose_immediate_restore(
+    observation: BlackstartObservation,
+    seen_signatures: set[str],
+) -> BlackstartAction | None:
+    """Return a restore action for any critical node that can be powered right now."""
+    candidates: list[tuple[int, int, str, BlackstartAction]] = []
+    for node in observation.critical_nodes:
+        if node.powered:
+            continue
+        feeder = next((s for s in observation.substations if s.id == node.feeder_bus), None)
+        if feeder is None or not feeder.energized:
+            continue
+        if observation.reserve_margin_mw < node.demand_mw:
+            continue
+        action = BlackstartAction(action_type=ActionType.RESTORE_CRITICAL_NODE, target_id=node.id)
+        if _is_action_blocked(action, seen_signatures):
+            continue
+        candidates.append((NODE_TYPE_WEIGHT[node.type], node.backup_minutes_remaining, node.id, action))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: (x[0], x[1]))
+    return candidates[0][3]
+
+
 def _best_generation_boost(
     observation: BlackstartObservation,
     seen_signatures: set[str],
@@ -456,8 +504,19 @@ def _best_generation_boost(
     offline = [generator for generator in observation.generators if not generator.online]
     if not offline:
         return None
-    offline.sort(key=lambda item: (_generator_action_minutes(item), -item.capacity_mw, item.id))
-    for generator in offline:
+    system_online = any(g.online for g in observation.generators)
+    if not system_online:
+        # Batteries can't activate without a live system reference — try blackstart gens first
+        ordered = sorted(
+            [g for g in offline if g.blackstart_capable],
+            key=lambda g: (_generator_action_minutes(g), -g.capacity_mw, g.id),
+        ) + sorted(
+            [g for g in offline if not g.blackstart_capable],
+            key=lambda g: (_generator_action_minutes(g), -g.capacity_mw, g.id),
+        )
+    else:
+        ordered = sorted(offline, key=lambda item: (_generator_action_minutes(item), -item.capacity_mw, item.id))
+    for generator in ordered:
         action = _generator_action(generator)
         if not _is_action_blocked(action, seen_signatures):
             return action
