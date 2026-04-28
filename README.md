@@ -63,6 +63,61 @@ Classic benchmarks optimize for a single objective. Blackstart City requires **m
 
 ## ⚙️ Environment Architecture
 
+## 🏗️ Proposed Solution Architecture (Open Innovation)
+
+Blackout City is designed as an open innovation platform: any external team can call the same APIs, run their own decision logic, and benchmark results on shared scenarios.
+
+```mermaid
+flowchart LR
+    U[Users / Students / Judges] --> HF[Hugging Face Space UI]
+
+    HF --> API[FastAPI Backend<br/>server/app.py]
+    API --> ENV[BlackstartCityEnv<br/>Simulation Engine]
+    ENV --> GR[Grading + Rubric Engine]
+    GR --> API
+
+    API --> BASE[Baseline Policies<br/>Greedy + Heuristic]
+    API --> LLM[Gemini API Integration<br/>AI Copilot for Next Best Action]
+
+    API --> LOGS[(Run Logs / Episodes)]
+    LOGS --> DASH[Analytics Dashboard]
+
+    EXT[External Innovators<br/>Custom Agents] --> API
+
+    subgraph Optional Google Stack
+      RUN[Cloud Run]
+      BQ[BigQuery]
+      FB[Firebase Auth / Firestore]
+    end
+
+    API -. deploy .-> RUN
+    LOGS -. export .-> BQ
+    HF -. user auth + app data .-> FB
+```
+
+### Tech Stack (Current + Extension Path)
+
+| Layer | Primary Tech | Purpose |
+|---|---|---|
+| Frontend / Demo | Hugging Face Spaces | Public interactive control-room demo |
+| Backend API | FastAPI (`server/app.py`) | `/reset`, `/step`, `/state`, `/grader`, `/compare`, `/manifest` |
+| Simulation Core | `BlackstartCityEnv` | City-scale blackout recovery environment and constraints |
+| Decision Policies | Greedy + Heuristic + LLM-ready tiering | Baseline benchmarking and AI-assisted recovery |
+| AI Integration | Gemini API | Action recommendation, rationale, and risk summarization |
+| Scoring | `blackstart_city/grading.py` | Safety, restoration quality, efficiency, and reliability metrics |
+| Open Innovation Interface | OpenEnv-style schema + public endpoints | Plug-and-play external agents and reproducible evaluation |
+| Optional Scale Layer | Cloud Run / BigQuery / Firebase | Production deployment, analytics, identity, and persistence |
+
+### End-to-End Request Flow
+
+1. User starts a scenario from the HF Space UI.
+2. UI calls FastAPI `/reset` and `/state` endpoints.
+3. User (or policy agent) submits an action to `/step`.
+4. Environment updates grid state, constraints, and event feed.
+5. Grader computes score components and returns updated metrics.
+6. Gemini (optional but recommended) generates next-best-action guidance.
+7. Logs are stored for benchmarking, comparison, and leaderboard analytics.
+
 ### Grid Topology — Power Flows Outward
 
 ```
