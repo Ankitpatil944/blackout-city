@@ -160,66 +160,36 @@ flowchart TD
 
 ---
 
-## 🔁 Process Flow Diagram — Blackout Recovery Decision Process
+## 🔁 Process Flow — Blackout Recovery
 
 ```mermaid
 flowchart TD
-    classDef start    fill:#1e3a5f,stroke:#3b82f6,color:#fff,rx:20
     classDef decision fill:#4a2d00,stroke:#f59e0b,color:#fff
     classDef action   fill:#1e4d3b,stroke:#22c55e,color:#fff
     classDef ai       fill:#3d1a1a,stroke:#ef4444,color:#fff
-    classDef danger   fill:#5a1a1a,stroke:#dc2626,color:#fff
-    classDef success  fill:#1a3d1a,stroke:#16a34a,color:#fff
-    classDef end_node fill:#1e3a5f,stroke:#3b82f6,color:#fff,rx:20
+    classDef terminal fill:#1e3a5f,stroke:#3b82f6,color:#fff
 
-    START(["🏁 Blackout Detected\nCity goes dark"]):::start
+    S(["🏁 Blackout Detected"]):::terminal
+    --> A["📡 Assess Damage\n& Read News Feed"]:::action
+    --> D1{{"⚡ Freq ≥ 59.5 Hz?"}}:::decision
 
-    START --> ASSESS["📡 Assess Damage\nInspect lines · Map dark nodes\nRead news feed"]:::action
+    D1 -- No --> GEN["🔋 Start Generator\nRaise Frequency"]:::action --> D1
+    D1 -- Yes --> D2{{"🏥 Hospital\nBackup Critical?"}}:::decision
 
-    ASSESS --> D1{{"⚡ Frequency\nStable?"}}:::decision
+    D2 -- Yes --> AI["🤖 Gemini\nRecommend Action"]:::ai --> EXEC["▶ Execute via /step"]:::action --> D2
+    D2 -- No --> D3{{"🔒 Constraint\nViolation Risk?"}}:::decision
 
-    D1 -- "< 59.5 Hz  ⚠️" --> STABGEN["🔋 Priority 0\nStart Blackstart Generator\nBring freq above 59.5 Hz"]:::danger
-    D1 -- "≥ 59.5 Hz  ✅" --> D2
+    D3 -- Yes --> AI
+    D3 -- No --> R["⚡ Restore Node\n(sub → critical → zone)"]:::action
+    --> G["📊 Grade Step"]:::action
+    --> D4{{"✅ All Critical\nNodes Powered?"}}:::decision
 
-    STABGEN --> D1
+    D4 -- No --> D2
+    D4 -- Yes --> D5{{"💥 Catastrophe?"}}:::decision
 
-    D2{{"🏥 Hospital\nBackup Critical?"}}:::decision
-
-    D2 -- "< 15 min remaining" --> GEMREC["🤖 Gemini AI\nAnalyse state + constraints\nRecommend next action"]:::ai
-    D2 -- "Safe headroom" --> TRIAGE
-
-    GEMREC --> EXEC["▶️ Execute Recommended\nAction via /step"]:::action
-    EXEC --> D2
-
-    TRIAGE["📋 Triage Queue\nHospital → Water → Telecom\n→ Emergency → Zones"]:::action
-
-    TRIAGE --> D3{{"🔒 Constraint\nViolation Risk?"}}:::decision
-
-    D3 -- "Yes — forbidden action" --> GEMREC
-    D3 -- "No — safe to proceed" --> RESTORE
-
-    RESTORE["⚡ Restore Node\nEnergize substation\nRestore critical load\nClose inspected lines"]:::action
-
-    RESTORE --> GRADE["📊 Grader Scores Step\nSafety · Restoration\nEfficiency · Comms"]:::action
-
-    GRADE --> D4{{"✅ All Critical\nNodes Powered?"}}:::decision
-
-    D4 -- "No" --> D2
-    D4 -- "Yes" --> ZONES
-
-    ZONES["🏘️ Restore Load Zones\nCorridor → Residential\n→ Industrial"]:::action
-
-    ZONES --> D5{{"💥 Catastrophe\nTriggered?"}}:::decision
-
-    D5 -- "Freq collapse / violation" --> FAIL(["❌ Episode Failed\nScore: 0.01\nSecond collapse"]):::danger
-    D5 -- "No" --> D6
-
-    D6{{"📢 Status Published\nto Public?"}}:::decision
-
-    D6 -- "No" --> PUB["📣 publish_status\nUpdate public trust\nBoost comms score"]:::action
-    D6 -- "Yes" --> DONE
-
-    PUB --> DONE(["🟢 City Restored\nFinal Score · Rubric\nEpisode Complete"]):::success
+    D5 -- Yes --> FAIL(["❌ Failed  Score: 0.01"]):::terminal
+    D5 -- No --> PUB["📣 Publish Status"]:::action
+    --> DONE(["🟢 City Restored"]):::terminal
 ```
 
 ---
@@ -228,63 +198,39 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    classDef actor   fill:#1e3a5f,stroke:#3b82f6,color:#fff
-    classDef uc      fill:#1e1e3a,stroke:#818cf8,color:#fff
-    classDef sysbox  fill:#0f172a,stroke:#334155,color:#94a3b8
+    classDef actor fill:#1e3a5f,stroke:#3b82f6,color:#fff
+    classDef uc    fill:#1e1e3a,stroke:#818cf8,color:#fff
+
+    OP(["👷 Operator"]):::actor
+    STU(["🎓 Student"]):::actor
+    EXT(["🤖 External Agent"]):::actor
+    GEM(["🌐 Gemini API"]):::actor
 
     subgraph SYS["  ⚡ Blackout City Platform  "]
         direction TB
-
-        subgraph Simulation["Simulation"]
-            UC1["Run Scenario\n(reset + seed)"]:::uc
-            UC2["Execute Recovery Action\n(/step)"]:::uc
-            UC3["Inspect Live Grid State\n(/state)"]:::uc
-            UC4["Trigger News Events\n(dynamic mid-episode)"]:::uc
+        subgraph SIM["Simulation"]
+            UC1["Run Scenario  /reset"]:::uc
+            UC2["Execute Action  /step"]:::uc
+            UC3["Inspect State  /state"]:::uc
         end
-
-        subgraph Intelligence["AI Intelligence"]
-            UC5["Get Gemini Recommendation\n(next-best-action + rationale)"]:::uc
-            UC6["Explain Constraint Violations\n(risk summary)"]:::uc
+        subgraph AI["AI Intelligence"]
+            UC4["Get Recommendation"]:::uc
+            UC5["Explain Constraints"]:::uc
         end
-
-        subgraph Evaluation["Evaluation"]
-            UC7["View Score Breakdown\n(/grader)"]:::uc
-            UC8["Compare Policies\n(greedy vs heuristic vs AI)"]:::uc
-            UC9["Export Episode Log\n(replay + audit)"]:::uc
+        subgraph EVAL["Evaluation"]
+            UC6["Score Breakdown  /grader"]:::uc
+            UC7["Compare Policies  /compare"]:::uc
         end
-
-        subgraph OpenInnovation["Open Innovation"]
-            UC10["Plug Custom Agent\n(any language via REST)"]:::uc
-            UC11["Benchmark on Shared Scenarios\n(/manifest + /schema)"]:::uc
-            UC12["Submit to Leaderboard"]:::uc
+        subgraph OI["Open Innovation"]
+            UC8["Plug Custom Agent"]:::uc
+            UC9["Benchmark + Leaderboard"]:::uc
         end
     end
 
-    OP(["👷 Operator /\nPlanner"]):::actor
-    STU(["🎓 Student /\nResearcher"]):::actor
-    EXT(["🤖 External\nAgent Team"]):::actor
-    GEM(["🌐 Gemini\nAPI"]):::actor
-
-    OP --- UC1
-    OP --- UC2
-    OP --- UC3
-    OP --- UC5
-    OP --- UC7
-
-    STU --- UC1
-    STU --- UC8
-    STU --- UC9
-    STU --- UC11
-    STU --- UC12
-
-    EXT --- UC10
-    EXT --- UC11
-    EXT --- UC12
-    EXT --- UC2
-
-    GEM --- UC5
-    GEM --- UC6
-    UC4 --- GEM
+    OP --- UC1 & UC2 & UC3 & UC4 & UC6
+    STU --- UC1 & UC7 & UC9
+    EXT --- UC8 & UC2 & UC9
+    GEM --- UC4 & UC5
 ```
 
 ---
