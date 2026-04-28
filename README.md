@@ -158,6 +158,94 @@ flowchart TD
 | Training | SFT (Unsloth) → GRPO (TRL) | Qwen 2.5-3B fine-tuned with 6 shaped reward signals |
 | Open Platform | OpenEnv REST schema + Docker | Any external agent plugs in via public API, zero setup |
 
+---
+
+## 🖥️ UI Wireframe — Control Room Dashboard
+
+```mermaid
+block-beta
+  columns 3
+
+  header["⚡  BLACKOUT CITY — AI Command Center                           Scenario: city_cascade_recovery  ·  Seed: 42  ·  Step: 4 / 26"]:3
+
+  block:left:1
+    columns 1
+    scenbox["📋  Scenario Panel\n──────────────────\nDifficulty : Hard\nMax Steps  : 26\nCritical Nodes : 4\n\n[ ▶ Reset ]   [ ⏭ Step ]"]
+    gridbox["🏙️  City Grid State\n──────────────────\nFrequency   : 59.2 Hz  ⚠️\nReserve     : 4 MW\nServed Load : 41 MW\n──────────────────\n🔋 Gen North     ✅ ON\n⬛ Sub Central   DARK\n🏥 Hospital      ⚠️ 14 min\n💧 Water Plant   ⬛ DARK\n📡 Telecom       ⬛ DARK"]
+  end
+
+  block:center:1
+    columns 1
+    newsfeed["📰  Live News Feed\n──────────────────\n⚠️  Hospital Central\n    generator fault\n    14 min remaining\n\n🔴  Constraint Active\n    Restore hospital\n    before residential\n\n📡  Telecom tower B\n    offline"]
+    constbox["🔒  Active Constraints\n──────────────────\n[ c_hospital_priority ]\nHospital before\nResidential  ·  ACTIVE\n\n[ c_freq_threshold ]\nFreq › 59.5 Hz before\nzone restore  ·  ACTIVE"]
+  end
+
+  block:right:1
+    columns 1
+    gemini["🤖  Gemini AI Co-Pilot\n──────────────────\nRecommended Action:\nrestore_critical_node\n› hospital_central\n\nRationale:\n14 min backup — act\nnow. Reserve 4 MW\ncovers 8 MW load.\n\n[ ✅ Execute ]  [ ↩ Skip ]"]
+    scorebox["📊  Score Breakdown\n──────────────────\nSafety          0.82\nRestoration     0.45\nEfficiency      0.71\nComms           0.60\nPublic Trust    0.42\n──────────────────\nOverall  ░░░░  0.78"]
+  end
+
+  footer["[ 🔁 Compare Policies ]      [ 📤 Export Episode Log ]      [ 🏆 Leaderboard ]                                    Powered by Gemini API"]:3
+```
+
+---
+
+## 🔄 Interaction Sequence — Full Episode Flow
+
+```mermaid
+sequenceDiagram
+    actor U as User / Agent
+    participant UI as HF Space UI
+    participant API as FastAPI Backend
+    participant ENV as BlackstartCityEnv
+    participant GEM as Gemini API
+    participant GRD as Grading Engine
+
+    U->>UI: Select scenario + seed · click Reset
+    UI->>API: POST /reset { task_id, seed }
+    API->>ENV: env.reset(task_id, seed)
+    ENV-->>API: initial observation (freq, nodes, constraints)
+    API-->>UI: observation + info
+    UI-->>U: Render city grid · news feed · constraints
+
+    loop Each Decision Step
+        U->>UI: Click "Get AI Recommendation"
+        UI->>API: GET /state
+        API->>ENV: env._build_observation()
+        ENV-->>API: current state snapshot
+        API->>GEM: state + news + constraints + failure history
+        GEM-->>API: recommended action + rationale + risk summary
+        API-->>UI: suggestion + explanation
+        UI-->>U: Gemini Co-Pilot panel updated
+
+        U->>UI: Click Execute (or override with own action)
+        UI->>API: POST /step { action_type, target_id, rationale }
+        API->>ENV: env.step(action)
+        ENV->>ENV: grid physics · news events · constraint check
+        ENV->>GRD: compute score components
+        GRD-->>ENV: score breakdown
+        ENV-->>API: observation · reward · done · info
+        API-->>UI: updated state + score
+        UI-->>U: Refresh grid · news · score panel
+    end
+
+    U->>UI: View Final Score
+    UI->>API: GET /grader
+    API-->>UI: safety · restoration · efficiency · comms · overall
+    UI-->>U: Full rubric breakdown
+
+    U->>UI: Compare Policies
+    UI->>API: POST /compare { task_id, seed }
+    API->>ENV: greedy rollout + heuristic rollout
+    API-->>UI: side-by-side results
+    UI-->>U: Greedy vs Heuristic vs AI-assisted comparison
+```
+
+---
+
+## ⚙️ Environment Architecture
+
 ### Grid Topology — Power Flows Outward
 
 ```
