@@ -63,60 +63,100 @@ Classic benchmarks optimize for a single objective. Blackstart City requires **m
 
 ## ⚙️ Environment Architecture
 
-## 🏗️ Proposed Solution Architecture (Open Innovation)
+## 🏗️ Solution Architecture — Open Innovation Platform
 
-Blackout City is designed as an open innovation platform: any external team can call the same APIs, run their own decision logic, and benchmark results on shared scenarios.
+Blackout City is an open, API-first AI decision platform for critical infrastructure recovery. Any team — student, researcher, or organization — can plug their own agent into the platform, run it against standardized scenarios, and benchmark against other solutions transparently.
 
 ```mermaid
-flowchart LR
-    U[Users / Students / Judges] --> HF[Hugging Face Space UI]
-
-    HF --> API[FastAPI Backend<br/>server/app.py]
-    API --> ENV[BlackstartCityEnv<br/>Simulation Engine]
-    ENV --> GR[Grading + Rubric Engine]
-    GR --> API
-
-    API --> BASE[Baseline Policies<br/>Greedy + Heuristic]
-    API --> LLM[Gemini API Integration<br/>AI Copilot for Next Best Action]
-
-    API --> LOGS[(Run Logs / Episodes)]
-    LOGS --> DASH[Analytics Dashboard]
-
-    EXT[External Innovators<br/>Custom Agents] --> API
-
-    subgraph Optional Google Stack
-      RUN[Cloud Run]
-      BQ[BigQuery]
-      FB[Firebase Auth / Firestore]
+flowchart TB
+    subgraph Users["👥 Users & Innovators"]
+        U1[Operators / Planners]
+        U2[Student Developers]
+        U3[External Agent Teams]
     end
 
-    API -. deploy .-> RUN
-    LOGS -. export .-> BQ
-    HF -. user auth + app data .-> FB
+    subgraph Frontend["🖥️ Frontend — Hugging Face Space"]
+        UI[Interactive Control Room UI]
+        VIZ[Live Grid State + Score Visualizer]
+        COMP[Policy Comparison Dashboard]
+    end
+
+    subgraph Backend["⚙️ Backend — FastAPI Server"]
+        API[REST API<br/>/reset · /step · /state · /grader · /compare · /manifest]
+        TIER[Three-Tier Agent Escalation<br/>Greedy → Heuristic → AI Policy]
+    end
+
+    subgraph AI["🤖 AI Layer — Google Gemini"]
+        GEM[Gemini API<br/>Next-Best-Action Recommendation]
+        EXP[Rationale + Risk Explanation Engine]
+        SUM[Incident Summary Generator]
+    end
+
+    subgraph Core["🏙️ Simulation Core"]
+        ENV[BlackstartCityEnv<br/>Grid Physics + Constraint Engine]
+        NEWS[Dynamic News Event System]
+        TASKS[4-Tier Scenario Catalog<br/>Easy → Extreme]
+        GRADE[Grading Engine<br/>Safety · Restoration · Efficiency · Reliability]
+    end
+
+    subgraph Open["🌐 Open Innovation Interface"]
+        SCHEMA[OpenEnv-compliant Schema<br/>/schema · /manifest]
+        BENCH[Shared Benchmark Scenarios]
+        LEAD[Score Leaderboard + Episode Logs]
+    end
+
+    Users --> Frontend
+    Frontend --> Backend
+    Backend --> AI
+    Backend --> Core
+    Core --> Backend
+    Backend --> Open
+    U3 --> API
+    GEM --> EXP
+    GEM --> SUM
 ```
 
-### Tech Stack (Current + Extension Path)
+### Request Flow
 
-| Layer | Primary Tech | Purpose |
+```
+User / Agent
+    │
+    ├─ POST /reset  ──► BlackstartCityEnv (load scenario, seed, constraints)
+    │
+    ├─ GET  /state  ──► current grid state, news feed, active constraints
+    │
+    ├─ POST /step   ──► action ──► env physics ──► grader ──► scored observation
+    │                                                │
+    │                                      Gemini API call:
+    │                                      "Given this state + failure history,
+    │                                       what is the next best action and why?"
+    │
+    ├─ GET  /grader ──► final score breakdown (safety, triage, efficiency, comms)
+    │
+    └─ GET  /compare ──► side-by-side greedy vs heuristic vs AI-assisted results
+```
+
+### Tech Stack
+
+| Layer | Technology | Role |
 |---|---|---|
-| Frontend / Demo | Hugging Face Spaces | Public interactive control-room demo |
-| Backend API | FastAPI (`server/app.py`) | `/reset`, `/step`, `/state`, `/grader`, `/compare`, `/manifest` |
-| Simulation Core | `BlackstartCityEnv` | City-scale blackout recovery environment and constraints |
-| Decision Policies | Greedy + Heuristic + LLM-ready tiering | Baseline benchmarking and AI-assisted recovery |
-| AI Integration | Gemini API | Action recommendation, rationale, and risk summarization |
-| Scoring | `blackstart_city/grading.py` | Safety, restoration quality, efficiency, and reliability metrics |
-| Open Innovation Interface | OpenEnv-style schema + public endpoints | Plug-and-play external agents and reproducible evaluation |
-| Optional Scale Layer | Cloud Run / BigQuery / Firebase | Production deployment, analytics, identity, and persistence |
+| Frontend | Hugging Face Spaces | Public control-room demo and visualizer |
+| Backend | FastAPI + Python | Simulation server — `/reset`, `/step`, `/state`, `/grader`, `/compare` |
+| Simulation Engine | `BlackstartCityEnv` | Grid physics, frequency dynamics, constraint system, news events |
+| AI Co-Pilot | **Gemini API (Google AI)** | Action recommendation, rationale generation, risk summarization |
+| Decision Policies | Greedy · Heuristic · LLM-assisted | Baseline benchmarking and three-tier escalation |
+| Scoring | `blackstart_city/grading.py` | 8-component rubric: safety, restoration, stability, efficiency, comms |
+| Training Pipeline | SFT (Unsloth + TRL) → GRPO | Fine-tuned Qwen 2.5-3B with 6 shaped reward signals |
+| Open Innovation | OpenEnv schema + public REST API | External agents plug in without any environment code access |
+| Deployment | Docker on HF Spaces | Zero-install public deployment, reproducible via `docker build` |
 
-### End-to-End Request Flow
+### Why This Architecture Is Open Innovation
 
-1. User starts a scenario from the HF Space UI.
-2. UI calls FastAPI `/reset` and `/state` endpoints.
-3. User (or policy agent) submits an action to `/step`.
-4. Environment updates grid state, constraints, and event feed.
-5. Grader computes score components and returns updated metrics.
-6. Gemini (optional but recommended) generates next-best-action guidance.
-7. Logs are stored for benchmarking, comparison, and leaderboard analytics.
+- **Standardized API contract** — any agent speaks the same `/reset`/`/step`/`/grader` protocol
+- **Shared scenarios + scoring** — transparent benchmarks, no hidden rules
+- **Gemini as intelligence layer** — every decision is explainable, not just executable
+- **Three-tier fallback** — human-designed baselines co-exist with AI, enabling fair comparison
+- **Fully reproducible** — Colab notebook, Docker image, public HF Space, open weights
 
 ### Grid Topology — Power Flows Outward
 
