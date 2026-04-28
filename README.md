@@ -160,6 +160,135 @@ flowchart TD
 
 ---
 
+## 🔁 Process Flow Diagram — Blackout Recovery Decision Process
+
+```mermaid
+flowchart TD
+    classDef start    fill:#1e3a5f,stroke:#3b82f6,color:#fff,rx:20
+    classDef decision fill:#4a2d00,stroke:#f59e0b,color:#fff
+    classDef action   fill:#1e4d3b,stroke:#22c55e,color:#fff
+    classDef ai       fill:#3d1a1a,stroke:#ef4444,color:#fff
+    classDef danger   fill:#5a1a1a,stroke:#dc2626,color:#fff
+    classDef success  fill:#1a3d1a,stroke:#16a34a,color:#fff
+    classDef end_node fill:#1e3a5f,stroke:#3b82f6,color:#fff,rx:20
+
+    START(["🏁 Blackout Detected\nCity goes dark"]):::start
+
+    START --> ASSESS["📡 Assess Damage\nInspect lines · Map dark nodes\nRead news feed"]:::action
+
+    ASSESS --> D1{{"⚡ Frequency\nStable?"}}:::decision
+
+    D1 -- "< 59.5 Hz  ⚠️" --> STABGEN["🔋 Priority 0\nStart Blackstart Generator\nBring freq above 59.5 Hz"]:::danger
+    D1 -- "≥ 59.5 Hz  ✅" --> D2
+
+    STABGEN --> D1
+
+    D2{{"🏥 Hospital\nBackup Critical?"}}:::decision
+
+    D2 -- "< 15 min remaining" --> GEMREC["🤖 Gemini AI\nAnalyse state + constraints\nRecommend next action"]:::ai
+    D2 -- "Safe headroom" --> TRIAGE
+
+    GEMREC --> EXEC["▶️ Execute Recommended\nAction via /step"]:::action
+    EXEC --> D2
+
+    TRIAGE["📋 Triage Queue\nHospital → Water → Telecom\n→ Emergency → Zones"]:::action
+
+    TRIAGE --> D3{{"🔒 Constraint\nViolation Risk?"}}:::decision
+
+    D3 -- "Yes — forbidden action" --> GEMREC
+    D3 -- "No — safe to proceed" --> RESTORE
+
+    RESTORE["⚡ Restore Node\nEnergize substation\nRestore critical load\nClose inspected lines"]:::action
+
+    RESTORE --> GRADE["📊 Grader Scores Step\nSafety · Restoration\nEfficiency · Comms"]:::action
+
+    GRADE --> D4{{"✅ All Critical\nNodes Powered?"}}:::decision
+
+    D4 -- "No" --> D2
+    D4 -- "Yes" --> ZONES
+
+    ZONES["🏘️ Restore Load Zones\nCorridor → Residential\n→ Industrial"]:::action
+
+    ZONES --> D5{{"💥 Catastrophe\nTriggered?"}}:::decision
+
+    D5 -- "Freq collapse / violation" --> FAIL(["❌ Episode Failed\nScore: 0.01\nSecond collapse"]):::danger
+    D5 -- "No" --> D6
+
+    D6{{"📢 Status Published\nto Public?"}}:::decision
+
+    D6 -- "No" --> PUB["📣 publish_status\nUpdate public trust\nBoost comms score"]:::action
+    D6 -- "Yes" --> DONE
+
+    PUB --> DONE(["🟢 City Restored\nFinal Score · Rubric\nEpisode Complete"]):::success
+```
+
+---
+
+## 👥 Use-Case Diagram — Blackout City Platform
+
+```mermaid
+flowchart LR
+    classDef actor   fill:#1e3a5f,stroke:#3b82f6,color:#fff
+    classDef uc      fill:#1e1e3a,stroke:#818cf8,color:#fff
+    classDef sysbox  fill:#0f172a,stroke:#334155,color:#94a3b8
+
+    subgraph SYS["  ⚡ Blackout City Platform  "]
+        direction TB
+
+        subgraph Simulation["Simulation"]
+            UC1["Run Scenario\n(reset + seed)"]:::uc
+            UC2["Execute Recovery Action\n(/step)"]:::uc
+            UC3["Inspect Live Grid State\n(/state)"]:::uc
+            UC4["Trigger News Events\n(dynamic mid-episode)"]:::uc
+        end
+
+        subgraph Intelligence["AI Intelligence"]
+            UC5["Get Gemini Recommendation\n(next-best-action + rationale)"]:::uc
+            UC6["Explain Constraint Violations\n(risk summary)"]:::uc
+        end
+
+        subgraph Evaluation["Evaluation"]
+            UC7["View Score Breakdown\n(/grader)"]:::uc
+            UC8["Compare Policies\n(greedy vs heuristic vs AI)"]:::uc
+            UC9["Export Episode Log\n(replay + audit)"]:::uc
+        end
+
+        subgraph OpenInnovation["Open Innovation"]
+            UC10["Plug Custom Agent\n(any language via REST)"]:::uc
+            UC11["Benchmark on Shared Scenarios\n(/manifest + /schema)"]:::uc
+            UC12["Submit to Leaderboard"]:::uc
+        end
+    end
+
+    OP(["👷 Operator /\nPlanner"]):::actor
+    STU(["🎓 Student /\nResearcher"]):::actor
+    EXT(["🤖 External\nAgent Team"]):::actor
+    GEM(["🌐 Gemini\nAPI"]):::actor
+
+    OP --- UC1
+    OP --- UC2
+    OP --- UC3
+    OP --- UC5
+    OP --- UC7
+
+    STU --- UC1
+    STU --- UC8
+    STU --- UC9
+    STU --- UC11
+    STU --- UC12
+
+    EXT --- UC10
+    EXT --- UC11
+    EXT --- UC12
+    EXT --- UC2
+
+    GEM --- UC5
+    GEM --- UC6
+    UC4 --- GEM
+```
+
+---
+
 ## 🖥️ UI Wireframe — Control Room Dashboard
 
 ```mermaid
