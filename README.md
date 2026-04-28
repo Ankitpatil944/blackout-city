@@ -163,33 +163,33 @@ flowchart TD
 ## 🔁 Process Flow — Blackout Recovery
 
 ```mermaid
-flowchart TD
+flowchart LR
     classDef decision fill:#4a2d00,stroke:#f59e0b,color:#fff
     classDef action   fill:#1e4d3b,stroke:#22c55e,color:#fff
     classDef ai       fill:#3d1a1a,stroke:#ef4444,color:#fff
     classDef terminal fill:#1e3a5f,stroke:#3b82f6,color:#fff
 
-    S(["🏁 Blackout Detected"]):::terminal
+    S(["🏁 Blackout\nDetected"]):::terminal
     --> A["📡 Assess Damage\n& Read News Feed"]:::action
-    --> D1{{"⚡ Freq ≥ 59.5 Hz?"}}:::decision
+    --> D1{{"⚡ Freq\n≥ 59.5 Hz?"}}:::decision
 
     D1 -- No --> GEN["🔋 Start Generator\nRaise Frequency"]:::action --> D1
-    D1 -- Yes --> D2{{"🏥 Hospital\nBackup Critical?"}}:::decision
+    D1 -- Yes --> D2{{"🏥 Hospital\nCritical?"}}:::decision
 
-    D2 -- Yes --> AI["🤖 Gemini\nRecommend Action"]:::ai --> EXEC["▶ Execute via /step"]:::action --> D2
-    D2 -- No --> D3{{"🔒 Constraint\nViolation Risk?"}}:::decision
+    D2 -- Yes --> AI["🤖 Gemini\nRecommend Action"]:::ai --> EXEC["▶ Execute\nvia /step"]:::action --> D2
+    D2 -- No --> D3{{"🔒 Constraint\nRisk?"}}:::decision
 
     D3 -- Yes --> AI
-    D3 -- No --> R["⚡ Restore Node\n(sub → critical → zone)"]:::action
+    D3 -- No --> R["⚡ Restore Node\nsub→critical→zone"]:::action
     --> G["📊 Grade Step"]:::action
-    --> D4{{"✅ All Critical\nNodes Powered?"}}:::decision
+    --> D4{{"✅ All Critical\nPowered?"}}:::decision
 
     D4 -- No --> D2
     D4 -- Yes --> D5{{"💥 Catastrophe?"}}:::decision
 
-    D5 -- Yes --> FAIL(["❌ Failed  Score: 0.01"]):::terminal
-    D5 -- No --> PUB["📣 Publish Status"]:::action
-    --> DONE(["🟢 City Restored"]):::terminal
+    D5 -- Yes --> FAIL(["❌ Failed\nScore: 0.01"]):::terminal
+    D5 -- No --> PUB["📣 Publish\nStatus"]:::action
+    --> DONE(["🟢 City\nRestored"]):::terminal
 ```
 
 ---
@@ -203,23 +203,23 @@ flowchart LR
 
     OP(["👷 Operator"]):::actor
     STU(["🎓 Student"]):::actor
-    EXT(["🤖 External Agent"]):::actor
+    EXT(["🤖 Ext. Agent"]):::actor
     GEM(["🌐 Gemini API"]):::actor
 
     subgraph SYS["  ⚡ Blackout City Platform  "]
-        direction TB
+        direction LR
         subgraph SIM["Simulation"]
-            UC1["Run Scenario  /reset"]:::uc
-            UC2["Execute Action  /step"]:::uc
-            UC3["Inspect State  /state"]:::uc
+            UC1["Run Scenario"]:::uc
+            UC2["Execute Action"]:::uc
+            UC3["Inspect State"]:::uc
         end
         subgraph AI["AI Intelligence"]
             UC4["Get Recommendation"]:::uc
             UC5["Explain Constraints"]:::uc
         end
         subgraph EVAL["Evaluation"]
-            UC6["Score Breakdown  /grader"]:::uc
-            UC7["Compare Policies  /compare"]:::uc
+            UC6["Score Breakdown"]:::uc
+            UC7["Compare Policies"]:::uc
         end
         subgraph OI["Open Innovation"]
             UC8["Plug Custom Agent"]:::uc
