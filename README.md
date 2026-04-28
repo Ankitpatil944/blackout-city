@@ -66,34 +66,83 @@ Classic benchmarks optimize for a single objective. Blackstart City requires **m
 ## 🏗️ Solution Architecture
 
 ```mermaid
-flowchart LR
-    U["👥 Users & External Agents"] --> HF
+flowchart TD
+    classDef user     fill:#1e3a5f,stroke:#3b82f6,color:#fff
+    classDef ui       fill:#1e4d3b,stroke:#22c55e,color:#fff
+    classDef api      fill:#3b2a5f,stroke:#a855f7,color:#fff
+    classDef ai       fill:#4a1e1e,stroke:#ef4444,color:#fff
+    classDef sim      fill:#2d3a1e,stroke:#84cc16,color:#fff
+    classDef open     fill:#1e3a4a,stroke:#38bdf8,color:#fff
 
-    subgraph HF["🖥️ Hugging Face Space"]
-        UI["Control Room UI · Visualizer · Compare Dashboard"]
+    %% ── USER LAYER ──────────────────────────────────────────
+    U1(["🧑‍💻 Operator / Planner"]):::user
+    U2(["🎓 Student / Researcher"]):::user
+    U3(["🤖 External Agent Team"]):::user
+
+    %% ── PRESENTATION LAYER ──────────────────────────────────
+    subgraph PRES["  PRESENTATION  ·  Hugging Face Spaces  "]
+        UI["Control Room UI"]:::ui
+        VIZ["Live Grid Visualizer"]:::ui
+        CMP["Policy Comparison View"]:::ui
     end
 
-    HF --> API
-
-    subgraph BE["⚙️ FastAPI Backend"]
-        API["/reset · /step · /state · /grader · /compare · /manifest"]
-        TIER["Greedy → Heuristic → AI  (3-tier escalation)"]
+    %% ── API GATEWAY ─────────────────────────────────────────
+    subgraph GATE["  API GATEWAY  ·  FastAPI  "]
+        RST["/reset"]:::api
+        STP["/step"]:::api
+        STT["/state"]:::api
+        GRD["/grader"]:::api
+        CMP2["/compare"]:::api
+        MNF["/manifest"]:::api
     end
 
-    API --> GEM
-    API --> ENV
-
-    GEM["🤖 Gemini API\nNext-best-action · Rationale · Risk summary"]
-
-    subgraph SIM["🏙️ Simulation Core"]
-        ENV["BlackstartCityEnv\nGrid physics · Constraints · News events"]
-        GRADE["Grading Engine\nSafety · Restoration · Efficiency · Comms"]
+    %% ── AI INTELLIGENCE LAYER ───────────────────────────────
+    subgraph AILY["  AI INTELLIGENCE  ·  Google Gemini API  "]
+        REC["Next-Best-Action\nRecommendation"]:::ai
+        RAT["Rationale &\nRisk Explanation"]:::ai
+        SUM["Incident\nSummary"]:::ai
     end
 
-    ENV --> GRADE --> API
-    GEM --> API
+    %% ── SIMULATION CORE ─────────────────────────────────────
+    subgraph CORE["  SIMULATION CORE  "]
+        ENV["BlackstartCityEnv\nGrid Physics · Frequency Dynamics"]:::sim
+        POL["Policy Engine\nGreedy → Heuristic → LLM (3-tier)"]:::sim
+        NEWS["Dynamic News\nEvent System"]:::sim
+        SCN["Scenario Catalog\nEasy · Medium · Hard · Extreme"]:::sim
+        GRD2["Grading Engine\nSafety · Restoration · Efficiency · Comms"]:::sim
+    end
 
-    API --> OI["🌐 Open API\nOpenEnv schema · Shared benchmarks · Leaderboard"]
+    %% ── OPEN INNOVATION LAYER ───────────────────────────────
+    subgraph OI["  OPEN INNOVATION INTERFACE  "]
+        SCH["OpenEnv Schema\n/schema · /manifest"]:::open
+        BNC["Shared Benchmark\nScenarios"]:::open
+        LDB["Score Leaderboard\n& Episode Logs"]:::open
+    end
+
+    %% ── CONNECTIONS ─────────────────────────────────────────
+    U1 & U2 --> UI
+    U3 -->|REST calls| RST
+
+    UI & VIZ & CMP --> RST & STP & STT & GRD & CMP2
+
+    RST & STP --> ENV
+    STT --> ENV
+    GRD --> GRD2
+    CMP2 --> POL
+
+    ENV --> NEWS --> ENV
+    ENV --> SCN
+    ENV --> GRD2
+    ENV --> POL
+
+    STP -->|current state| REC
+    REC --> RAT
+    REC --> SUM
+    REC -->|recommended action| STP
+
+    MNF --> SCH
+    GRD2 --> LDB
+    SCN --> BNC
 ```
 
 ### Tech Stack
