@@ -63,100 +63,51 @@ Classic benchmarks optimize for a single objective. Blackstart City requires **m
 
 ## ⚙️ Environment Architecture
 
-## 🏗️ Solution Architecture — Open Innovation Platform
-
-Blackout City is an open, API-first AI decision platform for critical infrastructure recovery. Any team — student, researcher, or organization — can plug their own agent into the platform, run it against standardized scenarios, and benchmark against other solutions transparently.
+## 🏗️ Solution Architecture
 
 ```mermaid
-flowchart TB
-    subgraph Users["👥 Users & Innovators"]
-        U1[Operators / Planners]
-        U2[Student Developers]
-        U3[External Agent Teams]
+flowchart LR
+    U["👥 Users & External Agents"] --> HF
+
+    subgraph HF["🖥️ Hugging Face Space"]
+        UI["Control Room UI · Visualizer · Compare Dashboard"]
     end
 
-    subgraph Frontend["🖥️ Frontend — Hugging Face Space"]
-        UI[Interactive Control Room UI]
-        VIZ[Live Grid State + Score Visualizer]
-        COMP[Policy Comparison Dashboard]
+    HF --> API
+
+    subgraph BE["⚙️ FastAPI Backend"]
+        API["/reset · /step · /state · /grader · /compare · /manifest"]
+        TIER["Greedy → Heuristic → AI  (3-tier escalation)"]
     end
 
-    subgraph Backend["⚙️ Backend — FastAPI Server"]
-        API[REST API<br/>/reset · /step · /state · /grader · /compare · /manifest]
-        TIER[Three-Tier Agent Escalation<br/>Greedy → Heuristic → AI Policy]
+    API --> GEM
+    API --> ENV
+
+    GEM["🤖 Gemini API\nNext-best-action · Rationale · Risk summary"]
+
+    subgraph SIM["🏙️ Simulation Core"]
+        ENV["BlackstartCityEnv\nGrid physics · Constraints · News events"]
+        GRADE["Grading Engine\nSafety · Restoration · Efficiency · Comms"]
     end
 
-    subgraph AI["🤖 AI Layer — Google Gemini"]
-        GEM[Gemini API<br/>Next-Best-Action Recommendation]
-        EXP[Rationale + Risk Explanation Engine]
-        SUM[Incident Summary Generator]
-    end
+    ENV --> GRADE --> API
+    GEM --> API
 
-    subgraph Core["🏙️ Simulation Core"]
-        ENV[BlackstartCityEnv<br/>Grid Physics + Constraint Engine]
-        NEWS[Dynamic News Event System]
-        TASKS[4-Tier Scenario Catalog<br/>Easy → Extreme]
-        GRADE[Grading Engine<br/>Safety · Restoration · Efficiency · Reliability]
-    end
-
-    subgraph Open["🌐 Open Innovation Interface"]
-        SCHEMA[OpenEnv-compliant Schema<br/>/schema · /manifest]
-        BENCH[Shared Benchmark Scenarios]
-        LEAD[Score Leaderboard + Episode Logs]
-    end
-
-    Users --> Frontend
-    Frontend --> Backend
-    Backend --> AI
-    Backend --> Core
-    Core --> Backend
-    Backend --> Open
-    U3 --> API
-    GEM --> EXP
-    GEM --> SUM
-```
-
-### Request Flow
-
-```
-User / Agent
-    │
-    ├─ POST /reset  ──► BlackstartCityEnv (load scenario, seed, constraints)
-    │
-    ├─ GET  /state  ──► current grid state, news feed, active constraints
-    │
-    ├─ POST /step   ──► action ──► env physics ──► grader ──► scored observation
-    │                                                │
-    │                                      Gemini API call:
-    │                                      "Given this state + failure history,
-    │                                       what is the next best action and why?"
-    │
-    ├─ GET  /grader ──► final score breakdown (safety, triage, efficiency, comms)
-    │
-    └─ GET  /compare ──► side-by-side greedy vs heuristic vs AI-assisted results
+    API --> OI["🌐 Open API\nOpenEnv schema · Shared benchmarks · Leaderboard"]
 ```
 
 ### Tech Stack
 
 | Layer | Technology | Role |
 |---|---|---|
-| Frontend | Hugging Face Spaces | Public control-room demo and visualizer |
-| Backend | FastAPI + Python | Simulation server — `/reset`, `/step`, `/state`, `/grader`, `/compare` |
-| Simulation Engine | `BlackstartCityEnv` | Grid physics, frequency dynamics, constraint system, news events |
-| AI Co-Pilot | **Gemini API (Google AI)** | Action recommendation, rationale generation, risk summarization |
-| Decision Policies | Greedy · Heuristic · LLM-assisted | Baseline benchmarking and three-tier escalation |
-| Scoring | `blackstart_city/grading.py` | 8-component rubric: safety, restoration, stability, efficiency, comms |
-| Training Pipeline | SFT (Unsloth + TRL) → GRPO | Fine-tuned Qwen 2.5-3B with 6 shaped reward signals |
-| Open Innovation | OpenEnv schema + public REST API | External agents plug in without any environment code access |
-| Deployment | Docker on HF Spaces | Zero-install public deployment, reproducible via `docker build` |
-
-### Why This Architecture Is Open Innovation
-
-- **Standardized API contract** — any agent speaks the same `/reset`/`/step`/`/grader` protocol
-- **Shared scenarios + scoring** — transparent benchmarks, no hidden rules
-- **Gemini as intelligence layer** — every decision is explainable, not just executable
-- **Three-tier fallback** — human-designed baselines co-exist with AI, enabling fair comparison
-- **Fully reproducible** — Colab notebook, Docker image, public HF Space, open weights
+| Frontend | Hugging Face Spaces | Control-room UI, scenario runner, policy comparison |
+| Backend | FastAPI + Python | `/reset` `/step` `/state` `/grader` `/compare` `/manifest` |
+| Simulation | `BlackstartCityEnv` | Grid physics, frequency dynamics, constraints, news events |
+| AI Co-Pilot | **Gemini API** | Next-best-action recommendation + plain-language rationale |
+| Policies | Greedy · Heuristic · LLM | Three-tier escalation with failure context injection |
+| Scoring | `grading.py` | 8-component rubric — safety, restoration, stability, comms |
+| Training | SFT (Unsloth) → GRPO (TRL) | Qwen 2.5-3B fine-tuned with 6 shaped reward signals |
+| Open Platform | OpenEnv REST schema + Docker | Any external agent plugs in via public API, zero setup |
 
 ### Grid Topology — Power Flows Outward
 
