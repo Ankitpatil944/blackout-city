@@ -200,32 +200,22 @@ flowchart LR
 flowchart LR
     classDef actor fill:#1e3a5f,stroke:#3b82f6,color:#fff
     classDef uc    fill:#1e1e3a,stroke:#818cf8,color:#fff
+    classDef grp   fill:#0f172a,stroke:#334155,color:#94a3b8
 
     OP(["👷 Operator"]):::actor
     STU(["🎓 Student"]):::actor
     EXT(["🤖 Ext. Agent"]):::actor
     GEM(["🌐 Gemini API"]):::actor
 
-    subgraph SYS["  ⚡ Blackout City Platform  "]
-        direction LR
-        subgraph SIM["Simulation"]
-            UC1["Run Scenario"]:::uc
-            UC2["Execute Action"]:::uc
-            UC3["Inspect State"]:::uc
-        end
-        subgraph AI["AI Intelligence"]
-            UC4["Get Recommendation"]:::uc
-            UC5["Explain Constraints"]:::uc
-        end
-        subgraph EVAL["Evaluation"]
-            UC6["Score Breakdown"]:::uc
-            UC7["Compare Policies"]:::uc
-        end
-        subgraph OI["Open Innovation"]
-            UC8["Plug Custom Agent"]:::uc
-            UC9["Benchmark + Leaderboard"]:::uc
-        end
-    end
+    UC1["Run Scenario"]:::uc
+    UC2["Execute Action"]:::uc
+    UC3["Inspect State"]:::uc
+    UC4["Get AI Recommendation"]:::uc
+    UC5["Explain Constraints"]:::uc
+    UC6["Score Breakdown"]:::uc
+    UC7["Compare Policies"]:::uc
+    UC8["Plug Custom Agent"]:::uc
+    UC9["Benchmark + Leaderboard"]:::uc
 
     OP --- UC1 & UC2 & UC3 & UC4 & UC6
     STU --- UC1 & UC7 & UC9
